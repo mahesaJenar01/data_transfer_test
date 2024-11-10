@@ -7,6 +7,7 @@ from setup_ngrok import start_ngrok
 from src.setup_logger import setup_logger
 from src.preparing_data import preparing_data
 from src.setup_credentials import create_service
+from src.spreadsheets.target import SpreadsheetError
 from src.spreadsheets.use_sheet import update_use_sheet
 from src.spreadsheets.batch_update import batch_update_spreadsheet
 
@@ -58,25 +59,32 @@ async def update_config(update: UpdateConfig):
 @app.post('/on_change')
 async def processing_data(data: OnChange):
     """
-    Proccessing Data sent from post on change end point.
+    Processing Data sent from post on change end point.
     """
-    data= preparing_data(
-        dana_used=config['dana_used'], 
-        spreadsheet_id=config['spreadsheet_ids'], 
-        values=data.values, 
-        service=service
-    )
+    try:
+        data = preparing_data(
+            dana_used=config['dana_used'], 
+            spreadsheet_id=config['spreadsheet_ids'], 
+            values=data.values, 
+            service=service
+        )
 
-    result= ''
-    for value in data:
-        if len(value['values'][0]) == 7:
-            result = result + f'\nName: {value["values"][0][0]}'
+        result = ''
+        for value in data:
+            if len(value['values'][0]) == 7:
+                result = result + f'\nName: {value["values"][0][0]}'
 
-    logger.debug(result)
-    return {
-        'message': 'Data send successfully.',
-        'result': batch_update_spreadsheet(service, config['spreadsheet_ids'], data)
-    }
+        logger.debug(result)
+        return {
+            'message': 'Data send successfully.',
+            'result': batch_update_spreadsheet(service, config['spreadsheet_ids'], data)
+        }
+    except SpreadsheetError as e:
+        logger.error(f"Spreadsheet operation failed: {e}")
+        return {
+            'message': 'Failed to process data',
+            'error': str(e)
+        }, 500  # Return 500 status code to indicate server error
 
 if __name__ == "__main__":
     # Start ngrok tunnel
