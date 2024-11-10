@@ -5,4 +5,5 @@ __pycache__/
 venv/
 credentials.json
 token.json
+.gitignore
 "@ | Out-File -FilePath .gitignore -Encoding utf8
