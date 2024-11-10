@@ -49,7 +49,8 @@ async def update_config(update: UpdateConfig):
     config['spreadsheet_ids']= update.spreadsheet_ids
 
     update_use_sheet(service, sheet_name=update.sheet_name)
-
+    
+    logger.debug(f'Updated config: {config}')
     return {
         'message': 'Configuration update successfully.',
         'previous_config': previous_config, 
