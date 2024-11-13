@@ -10,6 +10,10 @@ def get_cells_to_input(
         service: 'googleapiclient.discovery.Resource'
 ) -> Tuple[List[str]]:
     result = retrieve_target_spreadsheet_values(spreadsheet_id, service)
+
+    if isinstance(result, str):
+        return result
+
     bank_list= result[0]
     name_list= result[1]
     
@@ -40,12 +44,18 @@ def preparing_data(
         service: 'googleapiclient.discovery.Resource', 
         transfer_destination: str
 ) -> List[Dict[str, Union[List, str]]]:
-    name_ranges, bank_ranges= get_cells_to_input(
+    data_ranges= get_cells_to_input(
         dana_used, 
         len(values), 
         spreadsheet_id, 
         service
     )
+
+    if isinstance(data_ranges, str):
+        return data_ranges
+    
+    name_ranges, bank_ranges= data_ranges
+
     data= []
     for i in range(len(name_ranges)):
         if 'KIRIM DANA KE' in values[i][0]:

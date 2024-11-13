@@ -73,15 +73,26 @@ async def processing_data(data: OnChange):
             transfer_destination= config['transfer_destination']
         )
 
-        result = ''
-        for value in data:
-            if len(value['values'][0]) == 7:
-                result = result + f'\nName: {value["values"][0][0]}'
+        if not isinstance(data, str):
+            result = ''
+            for value in data:
+                if len(value['values'][0]) == 7:
+                    result = result + f'\nName: {value["values"][0][0]}'
 
-        logger.debug(result)
+            logger.debug(result)
+            return {
+                'message': 'Data send successfully.',
+                'result': batch_update_spreadsheet(
+                    service, 
+                    config['spreadsheet_ids'], 
+                    data
+                )
+            }
+
+        logger.debug(data)
         return {
-            'message': 'Data send successfully.',
-            'result': batch_update_spreadsheet(service, config['spreadsheet_ids'], data)
+            'message': 'Data cannot be send.',
+            'result': data
         }
     except SpreadsheetError as e:
         logger.error(f"Spreadsheet operation failed: {e}")

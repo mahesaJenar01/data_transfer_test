@@ -22,6 +22,9 @@ def retrieve_target_spreadsheet_values(spreadsheet_id: str, service: 'googleapic
         SpreadsheetError: If there's an error retrieving values from the spreadsheet
     """
     try:
+        if not spreadsheet_id:
+            return 'Spreadsheets target IDs not set just yet.'
+
         ranges = ['E13:E5002', 'C13:C5002']
  
         values = service.spreadsheets().values().batchGet(
