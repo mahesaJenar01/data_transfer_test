@@ -50,7 +50,9 @@ async def update_config(update: UpdateConfig):
 
     update_use_sheet(service, sheet_name=update.sheet_name)
     
-    logger.debug(f'Updated config: {config}')
+    logger.debug(
+        f'Updated config: \nDana Used: {config["dana_used"]}\nSpreadsheets Id: {config["spreadsheet_ids"]}\nTransfer Destination: {config["transfer_destination"]}'
+    )
     return {
         'message': 'Configuration update successfully.',
         'previous_config': previous_config, 
@@ -67,7 +69,8 @@ async def processing_data(data: OnChange):
             dana_used=config['dana_used'], 
             spreadsheet_id=config['spreadsheet_ids'], 
             values=data.values, 
-            service=service
+            service=service, 
+            transfer_destination= config['transfer_destination']
         )
 
         result = ''
