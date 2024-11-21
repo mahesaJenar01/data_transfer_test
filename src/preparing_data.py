@@ -6,10 +6,10 @@ from .spreadsheets.target import retrieve_target_spreadsheet_values
 def get_cells_to_input(
         dana_used: str, 
         total_range: int,
-        spreadsheet_id: str, 
+        spreadsheet_ids: str, 
         service: 'googleapiclient.discovery.Resource'
 ) -> Tuple[List[str]]:
-    result = retrieve_target_spreadsheet_values(spreadsheet_id, service)
+    result = retrieve_target_spreadsheet_values(spreadsheet_ids, service)
 
     if isinstance(result, str):
         return result
@@ -38,16 +38,14 @@ def get_current_time():
     return datetime.now().strftime("%H:%M:%S")
 
 def preparing_data(
-        dana_used: str, 
-        spreadsheet_id: str, 
+        config: dict, 
         values: List[List[Union[str, int]]], 
-        service: 'googleapiclient.discovery.Resource', 
-        transfer_destination: str
+        service: 'googleapiclient.discovery.Resource'
 ) -> List[Dict[str, Union[List, str]]]:
     data_ranges= get_cells_to_input(
-        dana_used, 
+        config['dana_used'], 
         len(values), 
-        spreadsheet_id, 
+        config['spreadsheet_ids'], 
         service
     )
 
@@ -59,7 +57,15 @@ def preparing_data(
     data= []
     for i in range(len(name_ranges)):
         if 'KIRIM DANA KE' in values[i][0]:
-            values[i][0] = f'{values[i][0]} {transfer_destination}'
+            values[i][0]= f'{values[i][0]} {config['transfer_destination']}'
+        elif 'KIRIM UANG' in values[i][0]:
+            if config['bank_destination'] and config['bank_name_destination']:
+                result= 'KIRIM DANA KE '
+                result= result+ config['bank_destination']
+                result= result+ ' '+ config['bank_name_destination']
+                result= result+ ' '+ config['transfer_destination']
+
+                values[i][0]= result
 
         data.append({
             'range': f'E{name_ranges[i]}', 
@@ -71,7 +77,7 @@ def preparing_data(
                 'range': f'B{name_ranges[i]}', 
                 'values': [[
                     get_current_time(), 
-                    dana_used, 
+                    config['dana_used'], 
                     '-'
                 ]]
             })
@@ -80,7 +86,9 @@ def preparing_data(
         for i in range(len(bank_ranges)):
             data.append({
                 'range': f'C{bank_ranges[i]}', 
-                'values': [[dana_used]]
+                'values': [[
+                    config['dana_used']
+                ]]
             })
 
     return data

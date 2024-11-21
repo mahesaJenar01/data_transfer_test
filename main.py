@@ -23,6 +23,8 @@ app = FastAPI(
 config= {
     'dana_used': '', 
     'spreadsheet_ids': '', 
+    'bank_destination': '',
+    'bank_name_destination': '',
     'transfer_destination': 'LAYER 1'
 }
 
@@ -30,6 +32,8 @@ class UpdateConfig(BaseModel):
     dana_used: str
     sheet_name: str
     spreadsheet_ids: str
+    bank_destination: str
+    bank_name_destination: str
 
 class OnChange(BaseModel):
     send_time: str
@@ -47,6 +51,8 @@ async def update_config(update: UpdateConfig):
     previous_config = config.copy()
     config['dana_used']= update.dana_used
     config['spreadsheet_ids']= update.spreadsheet_ids
+    config['bank_destination']= update.bank_destination
+    config['bank_name_destination']= update.bank_name_destination
 
     update_use_sheet(service, sheet_name=update.sheet_name)
     
@@ -66,11 +72,9 @@ async def processing_data(data: OnChange):
     """
     try:
         data = preparing_data(
-            dana_used=config['dana_used'], 
-            spreadsheet_id=config['spreadsheet_ids'], 
+            config= config,
             values=data.values, 
-            service=service, 
-            transfer_destination= config['transfer_destination']
+            service=service
         )
 
         if not isinstance(data, str):
