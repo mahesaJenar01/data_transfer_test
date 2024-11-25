@@ -66,15 +66,7 @@ async def update_config(update: UpdateConfig):
         'current_config': config
     }
 
-save_error_data= [[
-    "Jesus Christ",
-    50,
-    50000,
-    "",
-    "",
-    -150,
-    ""
-]]
+save_error_data= []
 
 @app.post('/on_change')
 async def processing_data(data: OnChange):
