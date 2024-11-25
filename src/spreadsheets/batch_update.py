@@ -59,6 +59,9 @@ def batch_update_spreadsheet(
         ).execute()
         
         return f'{result.get('totalUpdatedCells')} cells updated.'
-    except HttpError as error:
-        logger.error(f'An error occurred: {error}')
+    except HttpError as he:
+        logger.error(f'HttpError occurred: {he}')
+        return None
+    except Exception as e:
+        logger.error(f'An unexpected error occurred: {e}')
         return None

@@ -41,7 +41,7 @@ def preparing_data(
         config: dict, 
         values: List[List[Union[str, int]]], 
         service: 'googleapiclient.discovery.Resource'
-) -> List[Dict[str, Union[List, str]]]:
+) -> List[Dict[str, Union[list, str]]]:
     data_ranges= get_cells_to_input(
         config['dana_used'], 
         len(values), 
