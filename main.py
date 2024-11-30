@@ -77,8 +77,12 @@ async def processing_data(data: OnChange):
         copy_data= data.values.copy()
 
         if save_error_data:
+            logger.debug(f'save_error_data: {save_error_data}')
+
             copy_data.extend(save_error_data)
             save_error_data.clear()
+
+            logger.debug(f'copy_data: {copy_data}')
 
         formatted_data= preparing_data(
             config=config, 
@@ -108,7 +112,7 @@ async def processing_data(data: OnChange):
             'result': formatted_data
         }
     except SpreadsheetError as e:
-        save_error_data.append(copy_data)
+        save_error_data.extend(copy_data)
 
         logger.error(f'Spreadsheet operation failed: {e}')
         return {
@@ -116,7 +120,7 @@ async def processing_data(data: OnChange):
             'error': str(e)
         }, 500
     except HttpError as he:
-        save_error_data.append(copy_data)
+        save_error_data.extend(copy_data)
 
         logger.error(f'HTTP Error occurred: {he}')
         return {
@@ -124,8 +128,9 @@ async def processing_data(data: OnChange):
             'error': str(he)
         }, 500
     except Exception as e:
-        save_error_data.append(copy_data)
-
+        if copy_data:
+            save_error_data.extend(copy_data)
+            
         logger.error(f'Unexpected error: {e}')
         return {
             'message': 'An unexpected error occurred',
