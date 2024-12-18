@@ -9,6 +9,7 @@ from googleapiclient.errors import HttpError
 from src.preparing_data import preparing_data
 from src.setup_credentials import create_service
 from src.spreadsheets.target import SpreadsheetError
+from src.transaction_tracker import TransactionTracker
 from src.spreadsheets.use_sheet import update_use_sheet
 from src.spreadsheets.batch_update import batch_update_spreadsheet
 
@@ -66,6 +67,7 @@ async def update_config(update: UpdateConfig):
         'current_config': config
     }
 
+transaction_tracker = TransactionTracker()
 save_error_data= []
 
 @app.post('/on_change')
@@ -74,17 +76,35 @@ async def processing_data(data: OnChange):
     Processing Data sent from post on change end point.
     '''
     try:
-        copy_data= data.values.copy()
+        # Filter out previously processed transactions
+        new_transaction_ids = transaction_tracker.filter_new_transactions(
+            data.sheet_name,
+            data.transaction_id
+        )
+        
+        if not new_transaction_ids:
+            logger.debug('No new transactions to process')
+            return {
+                'message': 'No new transactions to process.',
+                'result': 'Skipped duplicate transactions'
+            }
+            
+        # Get indices of new transactions
+        new_indices = [
+            i for i, tx_id in enumerate(data.transaction_id)
+            if tx_id in new_transaction_ids
+        ]
+        
+        # Filter values to only include new transactions
+        copy_data = [data.values[i] for i in new_indices]
 
         if save_error_data:
             logger.debug(f'save_error_data: {save_error_data}')
-
             copy_data.extend(save_error_data)
             save_error_data.clear()
-
             logger.debug(f'copy_data: {copy_data}')
 
-        formatted_data= preparing_data(
+        formatted_data = preparing_data(
             config=config, 
             values=copy_data, 
             service=service
@@ -111,22 +131,6 @@ async def processing_data(data: OnChange):
             'message': 'Data cannot be send.',
             'result': formatted_data
         }
-    except SpreadsheetError as e:
-        save_error_data.extend(copy_data)
-
-        logger.error(f'Spreadsheet operation failed: {e}')
-        return {
-            'message': 'Failed to process data',
-            'error': str(e)
-        }, 500
-    except HttpError as he:
-        save_error_data.extend(copy_data)
-
-        logger.error(f'HTTP Error occurred: {he}')
-        return {
-            'message': 'Google Sheets API error',
-            'error': str(he)
-        }, 500
     except Exception as e:
         if copy_data:
             save_error_data.extend(copy_data)

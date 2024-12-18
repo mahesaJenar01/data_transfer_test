@@ -7,3 +7,4 @@ credentials.json
 token.json
 .gitignore
 "@ | Out-File -FilePath .gitignore -Encoding utf8
+transaction_history.json
