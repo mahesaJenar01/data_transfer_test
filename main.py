@@ -3,33 +3,32 @@ from pyngrok import ngrok
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import List, Union
+
 from setup_ngrok import start_ngrok
 from src.setup_logger import setup_logger
-from googleapiclient.errors import HttpError
-from src.preparing_data import preparing_data
+from src.config_cache import ConfigCache
 from src.setup_credentials import create_service
-from src.spreadsheets.target import SpreadsheetError
+from src.preparing_data import preparing_data
 from src.transaction_tracker import TransactionTracker
 from src.spreadsheets.use_sheet import update_use_sheet
 from src.spreadsheets.batch_update import batch_update_spreadsheet
 
+# Create service and logger
 service = create_service()
 logger = setup_logger('main', 'DEBUG')
 
+# Initialize FastAPI application
 app = FastAPI(
     title='Data Transfer',
-    description='An API that transfer data across spreadsheets.',
+    description='An API that transfers data across spreadsheets.',
     version='1.0.0'
 )
 
-config= {
-    'dana_used': '', 
-    'spreadsheet_ids': '', 
-    'bank_destination': '',
-    'bank_name_destination': '',
-    'transfer_destination': 'LAYER 1'
-}
+# Initialize config cache
+config_cache = ConfigCache()
+config = config_cache.get_config()
 
+# Pydantic models for request validation
 class UpdateConfig(BaseModel):
     dana_used: str
     sheet_name: str
@@ -50,12 +49,22 @@ async def update_config(update: UpdateConfig):
     Update or create configuration.
     '''
     
-    previous_config = config.copy()
-    config['dana_used']= update.dana_used
-    config['spreadsheet_ids']= update.spreadsheet_ids
-    config['bank_destination']= update.bank_destination
-    config['bank_name_destination']= update.bank_name_destination
+    # Prepare config update dictionary
+    config_update = {
+        'dana_used': update.dana_used,
+        'spreadsheet_ids': update.spreadsheet_ids,
+        'bank_destination': update.bank_destination,
+        'bank_name_destination': update.bank_name_destination
+    }
+    
+    # Update configuration with caching
+    previous_config = config_cache.update_config(config_update)
 
+    # Update global config for current session
+    global config
+    config = config_cache.get_config()
+
+    # Update use sheet with the sheet name
     update_use_sheet(service, sheet_name=update.sheet_name)
     
     logger.debug(
@@ -67,8 +76,9 @@ async def update_config(update: UpdateConfig):
         'current_config': config
     }
 
+# Initialize transaction tracker
 transaction_tracker = TransactionTracker()
-save_error_data= []
+save_error_data = []
 
 @app.post('/on_change')
 async def processing_data(data: OnChange):
@@ -98,18 +108,21 @@ async def processing_data(data: OnChange):
         # Filter values to only include new transactions
         copy_data = [data.values[i] for i in new_indices]
 
+        # Append any previously saved error data
         if save_error_data:
             logger.debug(f'save_error_data: {save_error_data}')
             copy_data.extend(save_error_data)
             save_error_data.clear()
             logger.debug(f'copy_data: {copy_data}')
 
+        # Prepare data for spreadsheet
         formatted_data = preparing_data(
             config=config, 
             values=copy_data, 
             service=service
         )
 
+        # Process and update spreadsheet
         if not isinstance(formatted_data, str):
             result = ''
             for value in formatted_data:
@@ -118,7 +131,7 @@ async def processing_data(data: OnChange):
 
             logger.debug(result)
             return {
-                'message': 'Data send successfully.',
+                'message': 'Data sent successfully.',
                 'result': batch_update_spreadsheet(
                     service, 
                     config['spreadsheet_ids'], 
@@ -126,12 +139,14 @@ async def processing_data(data: OnChange):
                 )
             }
 
+        # Log and return error if data preparation fails
         logger.debug(formatted_data)
         return {
-            'message': 'Data cannot be send.',
+            'message': 'Data cannot be sent.',
             'result': formatted_data
         }
     except Exception as e:
+        # Save error data for potential retry
         if copy_data:
             save_error_data.extend(copy_data)
             
@@ -141,6 +156,7 @@ async def processing_data(data: OnChange):
             'error': str(e)
         }, 500
 
+# Main entry point
 if __name__ == '__main__':
     # Start ngrok tunnel
     ngrok_tunnel = start_ngrok()
