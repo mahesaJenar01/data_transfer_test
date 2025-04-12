@@ -30,6 +30,7 @@ class ConfigCache:
                 # Initialize with default configuration if no cache exists
                 self.config_cache = {
                     'dana_used': '', 
+                    'sheet_name': '',
                     'spreadsheet_ids': '', 
                     'bank_destination': '',
                     'bank_name_destination': '',
@@ -41,6 +42,7 @@ class ConfigCache:
             # Fallback to default configuration
             self.config_cache = {
                 'dana_used': '', 
+                'sheet_name': '',
                 'spreadsheet_ids': '', 
                 'bank_destination': '',
                 'bank_name_destination': '',

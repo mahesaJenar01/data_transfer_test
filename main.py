@@ -1,8 +1,11 @@
 import uvicorn
 from pyngrok import ngrok
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Union
+import os
 
 from setup_ngrok import start_ngrok
 from src.setup_logger import setup_logger
@@ -24,6 +27,13 @@ app = FastAPI(
     version='1.0.0'
 )
 
+# Create static folder if it doesn't exist
+os.makedirs('static/css', exist_ok=True)
+os.makedirs('static/js', exist_ok=True)
+
+# Mount static files directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 # Initialize config cache
 config_cache = ConfigCache()
 config = config_cache.get_config()
@@ -43,6 +53,20 @@ class OnChange(BaseModel):
     transaction_id: List[str]
     values: List[List[Union[int, str]]]
 
+@app.get("/")
+async def root():
+    """
+    Serve the main configuration UI page
+    """
+    return FileResponse('static/index.html')
+
+@app.get("/get_config")
+async def get_config():
+    """
+    Return the current configuration
+    """
+    return {"config": config_cache.get_config()}
+
 @app.post('/update_config')
 async def update_config(update: UpdateConfig):
     '''
@@ -52,6 +76,7 @@ async def update_config(update: UpdateConfig):
     # Prepare config update dictionary
     config_update = {
         'dana_used': update.dana_used,
+        'sheet_name': update.sheet_name, 
         'spreadsheet_ids': update.spreadsheet_ids,
         'bank_destination': update.bank_destination,
         'bank_name_destination': update.bank_name_destination
@@ -68,7 +93,7 @@ async def update_config(update: UpdateConfig):
     update_use_sheet(service, sheet_name=update.sheet_name)
     
     logger.debug(
-        f'Updated config: \nDana Used: {config['dana_used']}\nSpreadsheets Id: {config['spreadsheet_ids']}\nTransfer Destination: {config['transfer_destination']}'
+        f'Updated config: \nSheet Name: {config["sheet_name"]}\nDana Used: {config["dana_used"]}'
     )
     return {
         'message': 'Configuration update successfully.',
@@ -127,7 +152,7 @@ async def processing_data(data: OnChange):
             result = ''
             for value in formatted_data:
                 if len(value['values'][0]) == 7:
-                    result = result + f'\nName: {value['values'][0][0]}'
+                    result = result + f'\nName: {value["values"][0][0]}'
 
             logger.debug(result)
             return {
@@ -147,7 +172,7 @@ async def processing_data(data: OnChange):
         }
     except Exception as e:
         # Save error data for potential retry
-        if copy_data:
+        if 'copy_data' in locals() and copy_data:
             save_error_data.extend(copy_data)
             
         logger.error(f'Unexpected error: {e}')
