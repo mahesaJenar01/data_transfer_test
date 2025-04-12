@@ -25,7 +25,6 @@ class ConfigCache:
             if os.path.exists(self.cache_file):
                 with open(self.cache_file, 'r') as f:
                     self.config_cache = json.load(f)
-                logger.info(f"Loaded configuration from {self.cache_file}")
             else:
                 # Initialize with default configuration if no cache exists
                 self.config_cache = {
@@ -54,7 +53,6 @@ class ConfigCache:
         try:
             with open(self.cache_file, 'w') as f:
                 json.dump(self.config_cache, f, indent=4)
-            logger.info(f"Saved configuration to {self.cache_file}")
         except Exception as e:
             logger.error(f"Error saving configuration cache: {e}")
 

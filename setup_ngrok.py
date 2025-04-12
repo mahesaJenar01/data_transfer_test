@@ -30,5 +30,4 @@ def start_ngrok():
     
     # Open a ngrok tunnel to the API
     ngrok_tunnel = ngrok.connect(8000)
-    logger.info(f'Public URL: {ngrok_tunnel.public_url}')
     return ngrok_tunnel
