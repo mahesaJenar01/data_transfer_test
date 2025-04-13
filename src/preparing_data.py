@@ -67,6 +67,12 @@ def preparing_data(
 
                 values[i][0]= result
 
+        # Append the formula for the "KREDIT YANG DIPROSES" range
+        values[i][1]= f'=G{name_ranges[i]}/1000'
+        
+        # Check of whether the biaya bank has a value or not and if it's not a send money
+        if values[i][5] and "KIRIM DANA KE" not in values[i][0]:
+            values[i][5]= f'=IF(OR(ISNUMBER(G{name_ranges[i]}),OR(ISNUMBER(H{name_ranges[i]}),ISNUMBER(I{name_ranges[i]}))),{values[i][5]},"")'
         data.append({
             'range': f'E{name_ranges[i]}', 
             'values': [values[i]]
