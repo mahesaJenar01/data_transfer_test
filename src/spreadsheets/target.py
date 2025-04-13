@@ -32,7 +32,20 @@ def retrieve_target_spreadsheet_values(spreadsheet_id: str, service: 'googleapic
             ranges=ranges
         ).execute()
 
-        return (values['valueRanges'][1]['values'], values['valueRanges'][0]['values'])
+        # Check if valueRanges exists and has at least 2 elements
+        if 'valueRanges' not in values or len(values['valueRanges']) < 2:
+            logger.warning(f"Unexpected response format from spreadsheet {spreadsheet_id}")
+            return ([], [])
+
+        # Safely get values with fallback to empty list if range is empty
+        bank_values = values['valueRanges'][1].get('values', [])
+        name_values = values['valueRanges'][0].get('values', [])
+
+        # Log information about empty spreadsheets
+        if not bank_values or not name_values:
+            logger.info(f"One or both ranges are empty in spreadsheet {spreadsheet_id}")
+            
+        return (bank_values, name_values)
     except Exception as e:
         logger.error(f'An unexpected error occurred: {e}')
         raise SpreadsheetError(f"Failed to retrieve spreadsheet values: {str(e)}")
