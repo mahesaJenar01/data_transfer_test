@@ -17,7 +17,6 @@ class TransactionTracker:
         # Store file in main directory
         self.storage_file = os.path.join(os.getcwd(), storage_file)
         self._transaction_sets: dict[str, Set[str]] = {}
-        self._current_sheet: str = ""
         self._load_transactions()
 
     def _load_transactions(self) -> None:
@@ -51,7 +50,7 @@ class TransactionTracker:
     def filter_new_transactions(self, sheet_name: str, transaction_ids: List[str]) -> List[str]:
         """
         Filter out previously processed transaction IDs and return only new ones.
-        If sheet_name is different from previous sheet_name, clear all saved data.
+        Maintains separate transaction history for each sheet.
         
         Args:
             sheet_name (str): Name of the sheet these transactions come from
@@ -63,16 +62,9 @@ class TransactionTracker:
         if not transaction_ids:
             return []
 
-        # Check if sheet has changed
-        if self._current_sheet and sheet_name != self._current_sheet:
-            logger.info(f"Sheet changed from {self._current_sheet} to {sheet_name}. Clearing all saved transactions.")
-            self._transaction_sets.clear()
-            self._save_transactions()
-        
-        self._current_sheet = sheet_name
-
         # Get or create set for this sheet
         if sheet_name not in self._transaction_sets:
+            logger.info(f"First time processing sheet: {sheet_name}")
             self._transaction_sets[sheet_name] = set()
 
         # Convert incoming IDs to set for comparison
@@ -93,6 +85,29 @@ class TransactionTracker:
 
         # Return list of new transaction IDs in the same order they were received
         return [tx_id for tx_id in transaction_ids if tx_id in new_transactions]
+
+    def get_tracked_sheets(self) -> List[str]:
+        """
+        Get a list of all sheets being tracked.
+        
+        Returns:
+            List[str]: List of sheet names
+        """
+        return list(self._transaction_sets.keys())
+
+    def get_transaction_count(self, sheet_name: str) -> int:
+        """
+        Get the count of tracked transactions for a specific sheet.
+        
+        Args:
+            sheet_name (str): Name of the sheet
+            
+        Returns:
+            int: Number of tracked transactions
+        """
+        if sheet_name in self._transaction_sets:
+            return len(self._transaction_sets[sheet_name])
+        return 0
 
     def cleanup_old_transactions(self, max_age_days: int = 30) -> None:
         """

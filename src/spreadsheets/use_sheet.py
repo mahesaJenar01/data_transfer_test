@@ -27,17 +27,17 @@ if not use_sheet_id:
 
 def update_use_sheet(
         service: 'googleapiclient.discovery.Resource', *, 
-        sheet_name: str = '', 
+        sheet_names: list = None, 
         api_url: str = '',
         max_retries: int = 3,
         retry_delay: float = 1.0
 ) -> None:
     """
-    Update the use sheet with sheet name or API URL with retry mechanism.
+    Update the use sheet with a comma-separated list of sheet names or API URL with retry mechanism.
 
     Args:
         service (googleapiclient.discovery.Resource): Google Sheets API service
-        sheet_name (str, optional): Name of the sheet to update. Defaults to ''.
+        sheet_names (list, optional): List of sheet names to update. Defaults to None.
         api_url (str, optional): API URL to update. Defaults to ''.
         max_retries (int, optional): Maximum number of retry attempts. Defaults to 3.
         retry_delay (float, optional): Delay between retry attempts in seconds. Defaults to 1.0.
@@ -58,13 +58,16 @@ def update_use_sheet(
                         'values': [[f'{api_url}/on_change']]
                     }
                 ).execute()
-            else:
+            elif sheet_names is not None:
+                # Join all sheet names with commas and update cell B2
+                sheet_names_str = ", ".join(sheet_names)
+                logger.debug(f'Updating sheet names in cell B2: {sheet_names_str}')
                 service.spreadsheets().values().update(
                     spreadsheetId=use_sheet_id, 
                     range='B2', 
                     valueInputOption='RAW', 
                     body={
-                        'values': [[sheet_name]]
+                        'values': [[sheet_names_str]]
                     }
                 ).execute()
             

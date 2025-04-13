@@ -1,15 +1,15 @@
 import uvicorn
 from pyngrok import ngrok
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import List, Union
+from typing import List, Dict, Union, Optional, Any
 import os
 
 from setup_ngrok import start_ngrok
 from src.setup_logger import setup_logger
-from src.config_cache import ConfigCache
+from src.config_cache import MultiConfigCache
 from src.setup_credentials import create_service
 from src.preparing_data import preparing_data
 from src.transaction_tracker import TransactionTracker
@@ -22,9 +22,9 @@ logger = setup_logger('main', 'DEBUG')
 
 # Initialize FastAPI application
 app = FastAPI(
-    title='Data Transfer',
-    description='An API that transfers data across spreadsheets.',
-    version='1.0.0'
+    title='Multi-Sheet Data Transfer',
+    description='An API that transfers data across multiple spreadsheets.',
+    version='2.0.0'
 )
 
 # Create static folder if it doesn't exist
@@ -35,11 +35,14 @@ os.makedirs('static/js', exist_ok=True)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Initialize config cache
-config_cache = ConfigCache()
-config = config_cache.get_config()
+config_cache = MultiConfigCache()
 
 # Pydantic models for request validation
-class UpdateConfig(BaseModel):
+class GlobalSettings(BaseModel):
+    transfer_destination: str = "LAYER 1"
+
+class SheetConfig(BaseModel):
+    sheet_id: Optional[str] = None
     dana_used: str
     sheet_name: str
     spreadsheet_ids: str
@@ -53,6 +56,47 @@ class OnChange(BaseModel):
     transaction_id: List[str]
     values: List[List[Union[int, str]]]
 
+# Structure to store error data with its original sheet name
+class ErrorData:
+    def __init__(self):
+        self.sheet_error_data = {}  # Dictionary to store error data by sheet name
+    
+    def add(self, sheet_name, data):
+        """Add error data for a specific sheet"""
+        if sheet_name not in self.sheet_error_data:
+            self.sheet_error_data[sheet_name] = []
+        self.sheet_error_data[sheet_name].extend(data)
+        logger.debug(f'Saved error data for sheet {sheet_name}: {len(data)} items')
+    
+    def get(self, sheet_name):
+        """Get error data for a specific sheet"""
+        return self.sheet_error_data.get(sheet_name, [])
+    
+    def remove(self, sheet_name):
+        """Remove error data for a specific sheet after successful processing"""
+        if sheet_name in self.sheet_error_data:
+            del self.sheet_error_data[sheet_name]
+            logger.debug(f'Cleared error data for sheet {sheet_name}')
+    
+    def has_data(self, sheet_name):
+        """Check if there's error data for a specific sheet"""
+        return sheet_name in self.sheet_error_data and len(self.sheet_error_data[sheet_name]) > 0
+
+# Function to update the "Use sheet" with all configured sheet names
+def update_sheet_names_in_use_sheet():
+    """
+    Updates the "Use sheet" B2 cell with all sheet names from configurations.
+    """
+    sheet_configs = config_cache.get_all_sheet_configs()
+    sheet_names = [config.get("sheet_name") for config in sheet_configs if config.get("sheet_name")]
+    
+    # Update the Use sheet with all configured sheet names
+    if sheet_names:
+        update_use_sheet(service, sheet_names=sheet_names)
+        logger.debug(f'Updated Use sheet with sheet names: {", ".join(sheet_names)}')
+    else:
+        logger.debug('No sheet names to update in Use sheet')
+
 @app.get("/")
 async def root():
     """
@@ -63,47 +107,105 @@ async def root():
 @app.get("/get_config")
 async def get_config():
     """
-    Return the current configuration
+    Return all configurations (global settings and sheet configs)
     """
-    return {"config": config_cache.get_config()}
-
-@app.post('/update_config')
-async def update_config(update: UpdateConfig):
-    '''
-    Update or create configuration.
-    '''
-    
-    # Prepare config update dictionary
-    config_update = {
-        'dana_used': update.dana_used,
-        'sheet_name': update.sheet_name, 
-        'spreadsheet_ids': update.spreadsheet_ids,
-        'bank_destination': update.bank_destination,
-        'bank_name_destination': update.bank_name_destination
-    }
-    
-    # Update configuration with caching
-    previous_config = config_cache.update_config(config_update)
-
-    # Update global config for current session
-    global config
-    config = config_cache.get_config()
-
-    # Update use sheet with the sheet name
-    update_use_sheet(service, sheet_name=update.sheet_name)
-    
-    logger.debug(
-        f'Updated config: \nSheet Name: {config["sheet_name"]}\nDana Used: {config["dana_used"]}'
-    )
     return {
-        'message': 'Configuration update successfully.',
-        'previous_config': previous_config, 
-        'current_config': config
+        "global_settings": config_cache.get_global_settings(),
+        "sheet_configs": config_cache.get_all_sheet_configs()
+    }
+
+@app.post('/update_global_settings')
+async def update_global_settings(settings: GlobalSettings):
+    '''
+    Update global settings.
+    '''
+    # Update global settings
+    previous_settings = config_cache.update_global_settings(settings.dict())
+    
+    logger.debug(f'Updated global settings: {settings.dict()}')
+    return {
+        'message': 'Global settings updated successfully.',
+        'previous_settings': previous_settings, 
+        'current_settings': config_cache.get_global_settings()
+    }
+
+@app.post('/add_sheet_config')
+async def add_sheet_config(config: SheetConfig):
+    '''
+    Add a new sheet configuration.
+    '''
+    # Check if a configuration with this sheet name already exists
+    existing_config = config_cache.get_sheet_config_by_name(config.sheet_name)
+    if existing_config:
+        raise HTTPException(status_code=400, detail=f"Configuration for sheet '{config.sheet_name}' already exists")
+    
+    # Add the new configuration
+    sheet_id = config_cache.add_sheet_config(config.dict())
+    
+    # Update Use sheet with all configured sheet names
+    update_sheet_names_in_use_sheet()
+    
+    logger.debug(f'Added sheet config: {config.dict()}')
+    return {
+        'message': 'Sheet configuration added successfully.',
+        'sheet_id': sheet_id,
+        'config': config_cache.get_sheet_config(sheet_id)
+    }
+
+@app.put('/update_sheet_config/{sheet_id}')
+async def update_sheet_config(sheet_id: str, config: SheetConfig):
+    '''
+    Update an existing sheet configuration.
+    '''
+    # Check if the configuration exists
+    existing_config = config_cache.get_sheet_config(sheet_id)
+    if not existing_config:
+        raise HTTPException(status_code=404, detail=f"Sheet configuration with ID '{sheet_id}' not found")
+    
+    # Check if sheet name conflict with different configuration
+    name_conflict = config_cache.get_sheet_config_by_name(config.sheet_name)
+    if name_conflict and name_conflict.get('sheet_id') != sheet_id:
+        raise HTTPException(status_code=400, detail=f"Configuration for sheet '{config.sheet_name}' already exists")
+    
+    # Update the configuration
+    previous_config = config_cache.update_sheet_config(sheet_id, config.dict())
+    
+    # Update Use sheet with all configured sheet names
+    update_sheet_names_in_use_sheet()
+    
+    logger.debug(f'Updated sheet config: {config.dict()}')
+    return {
+        'message': 'Sheet configuration updated successfully.',
+        'previous_config': previous_config,
+        'current_config': config_cache.get_sheet_config(sheet_id)
+    }
+
+@app.delete('/delete_sheet_config/{sheet_id}')
+async def delete_sheet_config(sheet_id: str):
+    '''
+    Delete a sheet configuration.
+    '''
+    # Check if the configuration exists
+    existing_config = config_cache.get_sheet_config(sheet_id)
+    if not existing_config:
+        raise HTTPException(status_code=404, detail=f"Sheet configuration with ID '{sheet_id}' not found")
+    
+    # Delete the configuration
+    success = config_cache.delete_sheet_config(sheet_id)
+    
+    # Update Use sheet with all configured sheet names
+    update_sheet_names_in_use_sheet()
+    
+    logger.debug(f'Deleted sheet config with ID: {sheet_id}')
+    return {
+        'message': 'Sheet configuration deleted successfully.',
+        'deleted_config': existing_config
     }
 
 # Initialize transaction tracker
 transaction_tracker = TransactionTracker()
-save_error_data = []
+# Initialize error data tracker
+save_error_data = ErrorData()
 
 @app.post('/on_change')
 async def processing_data(data: OnChange):
@@ -111,6 +213,21 @@ async def processing_data(data: OnChange):
     Processing Data sent from post on change end point.
     '''
     try:
+        # Get the configuration for this sheet
+        sheet_config = config_cache.get_sheet_config_by_name(data.sheet_name)
+        if not sheet_config:
+            logger.warning(f'No configuration found for sheet: {data.sheet_name}')
+            return {
+                'message': 'No configuration found for this sheet.',
+                'result': 'Skipped due to missing configuration'
+            }
+        
+        # Get global settings
+        global_settings = config_cache.get_global_settings()
+        
+        # Combine global settings with sheet config
+        config = {**sheet_config, **global_settings}
+        
         # Filter out previously processed transactions
         new_transaction_ids = transaction_tracker.filter_new_transactions(
             data.sheet_name,
@@ -133,12 +250,13 @@ async def processing_data(data: OnChange):
         # Filter values to only include new transactions
         copy_data = [data.values[i] for i in new_indices]
 
-        # Append any previously saved error data
-        if save_error_data:
-            logger.debug(f'save_error_data: {save_error_data}')
-            copy_data.extend(save_error_data)
-            save_error_data.clear()
-            logger.debug(f'copy_data: {copy_data}')
+        # Check if there are saved error data for this sheet
+        if save_error_data.has_data(data.sheet_name):
+            error_data = save_error_data.get(data.sheet_name)
+            logger.debug(f'Retrieved saved error data for sheet {data.sheet_name}: {len(error_data)} items')
+            copy_data.extend(error_data)
+            # Clear the error data for this sheet
+            save_error_data.remove(data.sheet_name)
 
         # Prepare data for spreadsheet
         formatted_data = preparing_data(
@@ -171,9 +289,10 @@ async def processing_data(data: OnChange):
             'result': formatted_data
         }
     except Exception as e:
-        # Save error data for potential retry
-        if 'copy_data' in locals() and copy_data:
-            save_error_data.extend(copy_data)
+        # Save error data for potential retry, associated with its sheet name
+        if 'copy_data' in locals() and copy_data and 'data' in locals() and data:
+            save_error_data.add(data.sheet_name, copy_data)
+            logger.error(f'Saved error data for sheet {data.sheet_name} for later retry')
             
         logger.error(f'Unexpected error: {e}')
         return {
@@ -181,10 +300,21 @@ async def processing_data(data: OnChange):
             'error': str(e)
         }, 500
 
+# Schedule to retry processing saved error data
+@app.on_event("startup")
+async def startup_event():
+    """
+    Run at startup to initialize necessary components
+    """
+    # Update Use sheet with all sheet names from configurations
+    update_sheet_names_in_use_sheet()
+
 # Main entry point
 if __name__ == '__main__':
     # Start ngrok tunnel
     ngrok_tunnel = start_ngrok()
+    
+    # Update use sheet with the ngrok URL
     update_use_sheet(service, api_url=ngrok_tunnel.public_url)
 
     # Start the FastAPI application
