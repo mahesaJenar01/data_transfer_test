@@ -49,10 +49,10 @@ def update_use_sheet(
     for attempt in range(max_retries):
         try:
             if api_url:
-                logger.debug('API URL provided; updating cell B2.')
+                logger.debug('API URL provided; updating cell B1.')
                 service.spreadsheets().values().update(
                     spreadsheetId=use_sheet_id, 
-                    range='B2', 
+                    range='B1', 
                     valueInputOption='RAW', 
                     body={
                         'values': [[f'{api_url}/on_change']]
@@ -61,7 +61,7 @@ def update_use_sheet(
             else:
                 service.spreadsheets().values().update(
                     spreadsheetId=use_sheet_id, 
-                    range='B1', 
+                    range='B2', 
                     valueInputOption='RAW', 
                     body={
                         'values': [[sheet_name]]
