@@ -1,13 +1,12 @@
 import uvicorn
 from pyngrok import ngrok
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Union, Optional
 import os
 
-from fastapi.responses import StreamingResponse
 import asyncio
 from asyncio import Queue
 import json
@@ -20,10 +19,20 @@ from src.preparing_data import preparing_data
 from src.transaction_tracker import TransactionTracker
 from src.spreadsheets.use_sheet import update_use_sheet
 from src.spreadsheets.batch_update import batch_update_spreadsheet
+from src.token_manager import TokenManager
 
 # Create service and logger
 service = create_service()
 logger = setup_logger('main', 'DEBUG')
+
+# Get the USE_SHEET_ID from environment variables
+use_sheet_id = os.getenv('USE_SHEET_ID')
+if not use_sheet_id:
+    logger.error('USE_SHEET_ID not found in environment variables')
+    raise ValueError('USE_SHEET_ID environment variable is required')
+
+# Initialize token manager
+token_manager = TokenManager(service, use_sheet_id)
 
 # Initialize FastAPI application
 app = FastAPI(
@@ -181,25 +190,54 @@ async def root():
     return FileResponse('static/index.html')
 
 @app.get("/get_config")
-async def get_config():
+async def get_config(request: Request, referer: Optional[str] = Header(None), origin: Optional[str] = Header(None), x_ui_request: Optional[str] = Header(None)):
     """
-    Return all configurations (global settings and sheet configs)
-    with sensitive fields removed from the response
+    Return all configurations (global settings and sheet configs).
+    
+    Hides sheet_id for external API requests (like Postman) but includes it for web UI requests.
     """
     # Get the original configurations
     global_settings = config_cache.get_global_settings()
     sheet_configs = config_cache.get_all_sheet_configs()
     
-    # Filter out only sheet_id from sheet configurations
-    filtered_sheet_configs = []
-    for config in sheet_configs:
-        filtered_config = {k: v for k, v in config.items() if k != "sheet_id"}
-        filtered_sheet_configs.append(filtered_config)
+    # Check if the request is coming from our UI
+    # Method 1: Check for a custom header that our UI will send
+    is_ui_request = x_ui_request == "true"
     
-    return {
-        "global_settings": global_settings,
-        "sheet_configs": filtered_sheet_configs
-    }
+    # Method 2: Check referer/origin (request coming from our domain)
+    request_host = request.headers.get("host", "")
+    is_same_origin = False
+    
+    if referer:
+        # Check if referer contains our host
+        is_same_origin = request_host in referer
+    elif origin:
+        # Check if origin matches our host
+        is_same_origin = request_host in origin
+    
+    # Is this request from our UI?
+    from_ui = is_ui_request or is_same_origin
+    
+    logger.debug(f"Request from UI: {from_ui}, Host: {request_host}, Referer: {referer}, Origin: {origin}")
+    
+    if from_ui:
+        # For UI requests, include all data including sheet_id
+        return {
+            "global_settings": global_settings,
+            "sheet_configs": sheet_configs
+        }
+    else:
+        # For external API requests (like Postman), filter out sheet_id
+        filtered_configs = []
+        for config in sheet_configs:
+            # Create a copy without sheet_id
+            filtered_config = {k: v for k, v in config.items() if k != "sheet_id"}
+            filtered_configs.append(filtered_config)
+        
+        return {
+            "global_settings": global_settings,
+            "sheet_configs": filtered_configs
+        }
 
 @app.post('/update_global_settings')
 async def update_global_settings(settings: GlobalSettings):
@@ -219,7 +257,7 @@ async def update_global_settings(settings: GlobalSettings):
 @app.post('/add_sheet_config')
 async def add_sheet_config(config: SheetConfig):
     '''
-    Add a new sheet configuration.
+    Add a new sheet configuration (UI method).
     '''
     # Check if a configuration with this sheet name already exists
     existing_config = config_cache.get_sheet_config_by_name(config.sheet_name)
@@ -241,10 +279,50 @@ async def add_sheet_config(config: SheetConfig):
         'config': config_cache.get_sheet_config(sheet_id)
     }
 
+# New endpoint for token-based sheet configuration addition
+@app.post('/add_sheet_config/{token}')
+async def add_sheet_config_with_token(token: str, config: SheetConfig):
+    '''
+    Add a new sheet configuration using an authentication token.
+    '''
+    # Validate the token
+    is_valid, error_message = token_manager.validate_token(token)
+    if not is_valid:
+        raise HTTPException(status_code=401, detail=error_message)
+    
+    # Check if a configuration with this sheet name already exists
+    existing_config = config_cache.get_sheet_config_by_name(config.sheet_name)
+    if existing_config:
+        raise HTTPException(status_code=400, detail=f"Configuration for sheet '{config.sheet_name}' already exists")
+    
+    # Use the token (decrement usage count)
+    if not token_manager.use_token(token):
+        raise HTTPException(status_code=401, detail="Failed to use token")
+    
+    # Add the configuration
+    sheet_id = config_cache.add_sheet_config(config.dict())
+    
+    # Associate the sheet_id with the token
+    token_manager.associate_sheet_id(token, sheet_id)
+    
+    update_sheet_names_in_use_sheet()
+    
+    logger.debug(f'Added sheet config via token: {config.dict()}')
+    
+    # Notify clients about the change
+    await notify_clients("config_updated")
+    
+    return {
+        'message': 'Sheet configuration added successfully.',
+        'sheet_id': sheet_id,
+        'config': config_cache.get_sheet_config(sheet_id),
+        'token_usage_left': token_manager.tokens[token]["usage_left"]
+    }
+
 @app.put('/update_sheet_config/{sheet_id}')
 async def update_sheet_config(sheet_id: str, config: SheetConfig):
     '''
-    Update an existing sheet configuration.
+    Update an existing sheet configuration (UI method).
     '''
     # Check if the configuration exists
     existing_config = config_cache.get_sheet_config(sheet_id)
@@ -270,10 +348,50 @@ async def update_sheet_config(sheet_id: str, config: SheetConfig):
         'current_config': config_cache.get_sheet_config(sheet_id)
     }
 
+# New endpoint for token-based sheet configuration update
+@app.put('/api/{sheet_id}')
+async def update_sheet_config_with_token(sheet_id: str, config: SheetConfig):
+    '''
+    Update an existing sheet configuration using an authentication token.
+    '''
+    # Validate the sheet_id and check associated token
+    is_valid, error_message, token = token_manager.validate_sheet_id(sheet_id)
+    if not is_valid:
+        raise HTTPException(status_code=401, detail=error_message)
+    
+    # Check if the configuration exists
+    existing_config = config_cache.get_sheet_config(sheet_id)
+    if not existing_config:
+        raise HTTPException(status_code=404, detail=f"Sheet configuration with ID '{sheet_id}' not found")
+    
+    name_conflict = config_cache.get_sheet_config_by_name(config.sheet_name)
+    if name_conflict and name_conflict.get('sheet_id') != sheet_id:
+        raise HTTPException(status_code=400, detail=f"Configuration for sheet '{config.sheet_name}' already exists")
+    
+    # Use the token
+    if not token_manager.use_token(token):
+        raise HTTPException(status_code=401, detail="Failed to use token")
+    
+    previous_config = config_cache.update_sheet_config(sheet_id, config.dict())
+    
+    update_sheet_names_in_use_sheet()
+    
+    logger.debug(f'Updated sheet config via token: {config.dict()}')
+    
+    # Notify clients about the change
+    await notify_clients("config_updated")
+    
+    return {
+        'message': 'Sheet configuration updated successfully.',
+        'previous_config': previous_config,
+        'current_config': config_cache.get_sheet_config(sheet_id),
+        'token_usage_left': token_manager.tokens[token]["usage_left"]
+    }
+
 @app.delete('/delete_sheet_config/{sheet_id}')
 async def delete_sheet_config(sheet_id: str):
     '''
-    Delete a sheet configuration.
+    Delete a sheet configuration (UI method).
     '''
     # Check if the configuration exists
     existing_config = config_cache.get_sheet_config(sheet_id)
@@ -292,6 +410,41 @@ async def delete_sheet_config(sheet_id: str):
     return {
         'message': 'Sheet configuration deleted successfully.',
         'deleted_config': existing_config
+    }
+
+# New endpoint for token-based sheet configuration deletion
+@app.delete('/api/{sheet_id}')
+async def delete_sheet_config_with_token(sheet_id: str):
+    '''
+    Delete a sheet configuration using an authentication token.
+    '''
+    # Validate the sheet_id and check associated token
+    is_valid, error_message, token = token_manager.validate_sheet_id(sheet_id)
+    if not is_valid:
+        raise HTTPException(status_code=401, detail=error_message)
+    
+    # Check if the configuration exists
+    existing_config = config_cache.get_sheet_config(sheet_id)
+    if not existing_config:
+        raise HTTPException(status_code=404, detail=f"Sheet configuration with ID '{sheet_id}' not found")
+    
+    # Use the token
+    if not token_manager.use_token(token):
+        raise HTTPException(status_code=401, detail="Failed to use token")
+    
+    success = config_cache.delete_sheet_config(sheet_id)
+    
+    update_sheet_names_in_use_sheet()
+    
+    logger.debug(f'Deleted sheet config with ID: {sheet_id} via token')
+    
+    # Notify clients about the change
+    await notify_clients("config_updated")
+    
+    return {
+        'message': 'Sheet configuration deleted successfully.',
+        'deleted_config': existing_config,
+        'token_usage_left': token_manager.tokens[token]["usage_left"]
     }
 
 # Initialize transaction tracker
@@ -398,14 +551,33 @@ async def processing_data(data: OnChange):
             'error': str(e)
         }, 500
 
+# Get token stats endpoint (for admins)
+@app.get("/admin/token_stats")
+async def get_token_stats():
+    """
+    Return statistics about token usage
+    """
+    return {
+        "token_stats": token_manager.get_token_stats()
+    }
+
 # Schedule to retry processing saved error data
 @app.on_event("startup")
 async def startup_event():
     """
     Run at startup to initialize necessary components
     """
+    # Generate authentication tokens
+    tokens = token_manager.generate_tokens(count=3, length=12)
+    logger.info(f"Generated {len(tokens)} authentication tokens")
+    
+    # Write tokens to Use Sheet (B3, B4, B5)
+    token_manager.write_tokens_to_sheet(tokens)
+    
     # Update Use sheet with all sheet names from configurations
     update_sheet_names_in_use_sheet()
+    
+    logger.info("Application startup complete")
 
 # Main entry point
 if __name__ == '__main__':

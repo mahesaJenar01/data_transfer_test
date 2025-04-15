@@ -115,7 +115,11 @@ document.addEventListener('DOMContentLoaded', function() {
     async function loadConfigurations() {
         try {
             showLoading();
-            const response = await fetch('/get_config');
+            const response = await fetch('/get_config', {
+                headers: {
+                    'X-UI-Request': 'true'  // Add this custom header to identify UI requests
+                }
+            });
             
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -138,7 +142,7 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('Error loading configurations:', error);
             showStatus('Failed to load configurations: ' + error.message, true);
         }
-    }
+    }    
     
     // Function to edit a sheet configuration
     function editSheetConfig(sheetId) {
