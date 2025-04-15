@@ -4,8 +4,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import List, Dict, Union, Optional, Any
+from typing import List, Union, Optional
 import os
+
+from fastapi.responses import StreamingResponse
+import asyncio
+from asyncio import Queue
+import json
 
 from setup_ngrok import start_ngrok
 from src.setup_logger import setup_logger
@@ -26,6 +31,77 @@ app = FastAPI(
     description='An API that transfers data across multiple spreadsheets.',
     version='2.0.0'
 )
+
+connected_clients = {}
+
+@app.get('/sse')
+async def sse():
+    """
+    Endpoint for Server-Sent Events (SSE) to push real-time updates to clients
+    """
+    client_id = id(asyncio.current_task())
+    queue = Queue()
+    connected_clients[client_id] = queue
+    
+    logger.debug(f'Client {client_id} connected to SSE')
+    
+    async def event_generator():
+        try:
+            while True:
+                # Send initial connection message
+                if queue.empty():
+                    yield "data: {\"type\": \"connected\"}\n\n"
+                    
+                # Wait for messages from the queue
+                message = await queue.get()
+                if message is None:
+                    break
+                    
+                yield f"data: {message}\n\n"
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            pass
+        finally:
+            # Clean up when client disconnects
+            if client_id in connected_clients:
+                del connected_clients[client_id]
+                logger.debug(f'Client {client_id} disconnected from SSE')
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'  # Prevents proxies from buffering the response
+        }
+    )
+
+async def notify_clients(event_type, data=None):
+    """
+    Notify all connected clients about a configuration change
+    
+    Args:
+        event_type (str): Type of event (e.g., 'config_updated')
+        data (dict, optional): Additional data to send with the event
+    """
+    if not connected_clients:
+        return
+        
+    event_data = {
+        "type": event_type
+    }
+    
+    if data:
+        event_data.update(data)
+        
+    message = json.dumps(event_data)
+    
+    # Send to all connected clients
+    for client_id, queue in list(connected_clients.items()):
+        await queue.put(message)
+    
+    logger.debug(f'Notified {len(connected_clients)} clients: {event_type}')
 
 # Create static folder if it doesn't exist
 os.makedirs('static/css', exist_ok=True)
@@ -150,13 +226,15 @@ async def add_sheet_config(config: SheetConfig):
     if existing_config:
         raise HTTPException(status_code=400, detail=f"Configuration for sheet '{config.sheet_name}' already exists")
     
-    # Add the new configuration
     sheet_id = config_cache.add_sheet_config(config.dict())
     
-    # Update Use sheet with all configured sheet names
     update_sheet_names_in_use_sheet()
     
     logger.debug(f'Added sheet config: {config.dict()}')
+    
+    # Notify clients about the change
+    await notify_clients("config_updated")
+    
     return {
         'message': 'Sheet configuration added successfully.',
         'sheet_id': sheet_id,
@@ -173,18 +251,19 @@ async def update_sheet_config(sheet_id: str, config: SheetConfig):
     if not existing_config:
         raise HTTPException(status_code=404, detail=f"Sheet configuration with ID '{sheet_id}' not found")
     
-    # Check if sheet name conflict with different configuration
     name_conflict = config_cache.get_sheet_config_by_name(config.sheet_name)
     if name_conflict and name_conflict.get('sheet_id') != sheet_id:
         raise HTTPException(status_code=400, detail=f"Configuration for sheet '{config.sheet_name}' already exists")
     
-    # Update the configuration
     previous_config = config_cache.update_sheet_config(sheet_id, config.dict())
     
-    # Update Use sheet with all configured sheet names
     update_sheet_names_in_use_sheet()
     
     logger.debug(f'Updated sheet config: {config.dict()}')
+    
+    # Notify clients about the change
+    await notify_clients("config_updated")
+    
     return {
         'message': 'Sheet configuration updated successfully.',
         'previous_config': previous_config,
@@ -201,13 +280,15 @@ async def delete_sheet_config(sheet_id: str):
     if not existing_config:
         raise HTTPException(status_code=404, detail=f"Sheet configuration with ID '{sheet_id}' not found")
     
-    # Delete the configuration
     success = config_cache.delete_sheet_config(sheet_id)
     
-    # Update Use sheet with all configured sheet names
     update_sheet_names_in_use_sheet()
     
     logger.debug(f'Deleted sheet config with ID: {sheet_id}')
+    
+    # Notify clients about the change
+    await notify_clients("config_updated")
+    
     return {
         'message': 'Sheet configuration deleted successfully.',
         'deleted_config': existing_config
@@ -284,6 +365,12 @@ async def processing_data(data: OnChange):
                     result = result + f'\nName: {value["values"][0][0]}'
 
             logger.debug(result)
+            
+            # Notify clients that data was processed
+            await notify_clients("data_processed", {
+                "sheet_name": data.sheet_name
+            })
+            
             return {
                 'message': 'Data sent successfully.',
                 'result': batch_update_spreadsheet(

@@ -16,6 +16,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let sheetConfigs = [];
     let globalSettings = {};
     let currentEditingId = null;
+    let eventSource = null;
     
     // Function to show loading state
     function showLoading() {
@@ -36,6 +37,22 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             statusMessage.classList.add('success');
         }
+    }
+    
+    function showNotification(message) {
+        const notificationArea = document.getElementById('notificationArea');
+        const notificationMessage = document.getElementById('notificationMessage');
+        
+        // Set message
+        notificationMessage.textContent = message;
+        
+        // Show notification
+        notificationArea.classList.remove('hidden');
+        
+        // Hide notification after animation completes
+        setTimeout(() => {
+            notificationArea.classList.add('hidden');
+        }, 3000); // Match fadeOut animation + delay
     }
     
     // Function to toggle form visibility
@@ -273,6 +290,55 @@ document.addEventListener('DOMContentLoaded', function() {
             showStatus(`Failed to ${isEdit ? 'update' : 'add'} configuration: ${error.message}`, true);
         }
     }
+
+    // Function to setup Server-Sent Events connection
+    function setupSSEConnection() {
+        // Close any existing connection
+        if (eventSource) {
+            eventSource.close();
+        }
+
+        // Create a new connection
+        eventSource = new EventSource('/sse');
+
+        // Connection opened
+        eventSource.addEventListener('open', function(e) {
+            console.log('SSE connection established');
+        });
+
+        // Listen for messages
+        eventSource.addEventListener('message', function(e) {
+            try {
+                const data = JSON.parse(e.data);
+                
+                // Handle different event types
+                if (data.type === 'config_updated') {
+                    console.log('Configuration updated, refreshing data...');
+                    loadConfigurations();
+                    showNotification('Configuration updated automatically');
+                } else if (data.type === 'data_processed') {
+                    console.log('Data processed for sheet:', data.sheet_name);
+                    showNotification(`Data processed for sheet: ${data.sheet_name}`);
+                } else if (data.type === 'connected') {
+                    console.log('Connected to update stream');
+                }
+            } catch (error) {
+                console.error('Error processing SSE message:', error);
+            }
+        });        
+
+        // Error handling
+        eventSource.addEventListener('error', function(e) {
+            console.error('SSE connection error:', e);
+            
+            // Try to reconnect after a delay
+            setTimeout(() => {
+                if (eventSource.readyState === EventSource.CLOSED) {
+                    setupSSEConnection();
+                }
+            }, 5000);
+        });
+    }
     
     // Event listeners
     globalSettingsForm.addEventListener('submit', submitGlobalSettings);
@@ -282,4 +348,14 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load configurations when the page loads
     loadConfigurations();
+    
+    // Setup SSE connection
+    setupSSEConnection();
+    
+    // Reconnect if the page becomes visible again after being in background
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible' && (!eventSource || eventSource.readyState === EventSource.CLOSED)) {
+            setupSSEConnection();
+        }
+    });
 });
