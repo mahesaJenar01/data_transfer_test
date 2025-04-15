@@ -108,10 +108,21 @@ async def root():
 async def get_config():
     """
     Return all configurations (global settings and sheet configs)
+    with sensitive fields removed from the response
     """
+    # Get the original configurations
+    global_settings = config_cache.get_global_settings()
+    sheet_configs = config_cache.get_all_sheet_configs()
+    
+    # Filter out only sheet_id from sheet configurations
+    filtered_sheet_configs = []
+    for config in sheet_configs:
+        filtered_config = {k: v for k, v in config.items() if k != "sheet_id"}
+        filtered_sheet_configs.append(filtered_config)
+    
     return {
-        "global_settings": config_cache.get_global_settings(),
-        "sheet_configs": config_cache.get_all_sheet_configs()
+        "global_settings": global_settings,
+        "sheet_configs": filtered_sheet_configs
     }
 
 @app.post('/update_global_settings')
