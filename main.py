@@ -1,25 +1,24 @@
+import os
+import json
+import asyncio
 import uvicorn
+from asyncio import Queue
 from pyngrok import ngrok
-from fastapi import FastAPI, HTTPException, Request, Header
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Union, Optional
-import os
-
-import asyncio
-from asyncio import Queue
-import json
+from fastapi.staticfiles import StaticFiles
+from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi.responses import FileResponse, StreamingResponse
 
 from setup_ngrok import start_ngrok
 from src.setup_logger import setup_logger
+from src.token_manager import TokenManager
 from src.config_cache import MultiConfigCache
-from src.setup_credentials import create_service
 from src.preparing_data import preparing_data
+from src.setup_credentials import create_service
 from src.transaction_tracker import TransactionTracker
 from src.spreadsheets.use_sheet import update_use_sheet
 from src.spreadsheets.batch_update import batch_update_spreadsheet
-from src.token_manager import TokenManager
 
 # Create service and logger
 service = create_service()
@@ -283,7 +282,8 @@ async def add_sheet_config(config: SheetConfig):
 @app.post('/add_sheet_config/{token}')
 async def add_sheet_config_with_token(token: str, config: SheetConfig):
     '''
-    Add a new sheet configuration using an authentication token.
+    Add a new sheet configuration using a one-time authentication token.
+    The token will expire immediately after use.
     '''
     # Validate the token
     is_valid, error_message = token_manager.validate_token(token)
@@ -295,28 +295,28 @@ async def add_sheet_config_with_token(token: str, config: SheetConfig):
     if existing_config:
         raise HTTPException(status_code=400, detail=f"Configuration for sheet '{config.sheet_name}' already exists")
     
-    # Use the token (decrement usage count)
+    # Use and expire the token (one-time use only)
     if not token_manager.use_token(token):
         raise HTTPException(status_code=401, detail="Failed to use token")
     
     # Add the configuration
     sheet_id = config_cache.add_sheet_config(config.dict())
     
-    # Associate the sheet_id with the token
+    # Associate the sheet_id with the token (for record-keeping only)
     token_manager.associate_sheet_id(token, sheet_id)
     
     update_sheet_names_in_use_sheet()
     
-    logger.debug(f'Added sheet config via token: {config.dict()}')
+    logger.debug(f'Added sheet config via one-time token: {config.dict()}')
     
     # Notify clients about the change
     await notify_clients("config_updated")
     
     return {
-        'message': 'Sheet configuration added successfully.',
+        'message': 'Sheet configuration added successfully. The token has been expired and cannot be used again.',
         'sheet_id': sheet_id,
         'config': config_cache.get_sheet_config(sheet_id),
-        'token_usage_left': token_manager.tokens[token]["usage_left"]
+        'token_usage_left': 0
     }
 
 @app.put('/update_sheet_config/{sheet_id}')
@@ -348,46 +348,6 @@ async def update_sheet_config(sheet_id: str, config: SheetConfig):
         'current_config': config_cache.get_sheet_config(sheet_id)
     }
 
-# New endpoint for token-based sheet configuration update
-@app.put('/api/{sheet_id}')
-async def update_sheet_config_with_token(sheet_id: str, config: SheetConfig):
-    '''
-    Update an existing sheet configuration using an authentication token.
-    '''
-    # Validate the sheet_id and check associated token
-    is_valid, error_message, token = token_manager.validate_sheet_id(sheet_id)
-    if not is_valid:
-        raise HTTPException(status_code=401, detail=error_message)
-    
-    # Check if the configuration exists
-    existing_config = config_cache.get_sheet_config(sheet_id)
-    if not existing_config:
-        raise HTTPException(status_code=404, detail=f"Sheet configuration with ID '{sheet_id}' not found")
-    
-    name_conflict = config_cache.get_sheet_config_by_name(config.sheet_name)
-    if name_conflict and name_conflict.get('sheet_id') != sheet_id:
-        raise HTTPException(status_code=400, detail=f"Configuration for sheet '{config.sheet_name}' already exists")
-    
-    # Use the token
-    if not token_manager.use_token(token):
-        raise HTTPException(status_code=401, detail="Failed to use token")
-    
-    previous_config = config_cache.update_sheet_config(sheet_id, config.dict())
-    
-    update_sheet_names_in_use_sheet()
-    
-    logger.debug(f'Updated sheet config via token: {config.dict()}')
-    
-    # Notify clients about the change
-    await notify_clients("config_updated")
-    
-    return {
-        'message': 'Sheet configuration updated successfully.',
-        'previous_config': previous_config,
-        'current_config': config_cache.get_sheet_config(sheet_id),
-        'token_usage_left': token_manager.tokens[token]["usage_left"]
-    }
-
 @app.delete('/delete_sheet_config/{sheet_id}')
 async def delete_sheet_config(sheet_id: str):
     '''
@@ -410,41 +370,6 @@ async def delete_sheet_config(sheet_id: str):
     return {
         'message': 'Sheet configuration deleted successfully.',
         'deleted_config': existing_config
-    }
-
-# New endpoint for token-based sheet configuration deletion
-@app.delete('/api/{sheet_id}')
-async def delete_sheet_config_with_token(sheet_id: str):
-    '''
-    Delete a sheet configuration using an authentication token.
-    '''
-    # Validate the sheet_id and check associated token
-    is_valid, error_message, token = token_manager.validate_sheet_id(sheet_id)
-    if not is_valid:
-        raise HTTPException(status_code=401, detail=error_message)
-    
-    # Check if the configuration exists
-    existing_config = config_cache.get_sheet_config(sheet_id)
-    if not existing_config:
-        raise HTTPException(status_code=404, detail=f"Sheet configuration with ID '{sheet_id}' not found")
-    
-    # Use the token
-    if not token_manager.use_token(token):
-        raise HTTPException(status_code=401, detail="Failed to use token")
-    
-    success = config_cache.delete_sheet_config(sheet_id)
-    
-    update_sheet_names_in_use_sheet()
-    
-    logger.debug(f'Deleted sheet config with ID: {sheet_id} via token')
-    
-    # Notify clients about the change
-    await notify_clients("config_updated")
-    
-    return {
-        'message': 'Sheet configuration deleted successfully.',
-        'deleted_config': existing_config,
-        'token_usage_left': token_manager.tokens[token]["usage_left"]
     }
 
 # Initialize transaction tracker

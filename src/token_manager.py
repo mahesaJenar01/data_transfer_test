@@ -54,32 +54,46 @@ class TokenManager:
     
     def generate_tokens(self, count: int = 3, length: int = 12) -> List[str]:
         """
-        Generate random authentication tokens.
+        Generate exactly 3 new authentication tokens, replacing any existing ones.
         
         Args:
-            count (int): Number of tokens to generate
+            count (int): Number of tokens to generate (default 3)
             length (int): Length of each token
             
         Returns:
             List[str]: List of generated tokens
         """
-        tokens = []
+        # Generate new tokens
+        new_tokens = []
         for _ in range(count):
             # Generate random token with alphanumeric characters
             token = ''.join(random.choices(string.ascii_letters + string.digits, k=length))
-            tokens.append(token)
+            new_tokens.append(token)
             
             # Initialize token with usage limit
-            if token not in self.tokens:
-                self.tokens[token] = {
-                    "usage_left": 5,  # Initial usage limit
-                    "sheet_ids": []
-                }
+            self.tokens[token] = {
+                "usage_left": 1,  # Initial usage limit
+                "sheet_ids": []
+            }
+        
+        # Remove all old tokens that aren't in the new set
+        old_tokens = list(self.tokens.keys())
+        for old_token in old_tokens:
+            if old_token not in new_tokens:
+                # Remove associations for sheet_ids linked to this token
+                if old_token in self.tokens:
+                    for sheet_id in self.tokens[old_token]["sheet_ids"]:
+                        if sheet_id in self.sheet_id_to_token:
+                            del self.sheet_id_to_token[sheet_id]
+                    
+                    # Remove the token itself
+                    del self.tokens[old_token]
         
         # Save the updated tokens
         self._save_tokens()
         
-        return tokens
+        logger.info(f"Generated {len(new_tokens)} new tokens, purged old tokens")
+        return new_tokens
     
     def write_tokens_to_sheet(self, tokens: List[str]) -> bool:
         """
@@ -165,7 +179,8 @@ class TokenManager:
     
     def associate_sheet_id(self, token: str, sheet_id: str) -> None:
         """
-        Associate a sheet_id with a token.
+        Record association between token and sheet_id for tracking purposes only.
+        This doesn't enable further API access as tokens expire after first use.
         
         Args:
             token (str): Token
@@ -175,12 +190,13 @@ class TokenManager:
             if sheet_id not in self.tokens[token]["sheet_ids"]:
                 self.tokens[token]["sheet_ids"].append(sheet_id)
             
+            # We still maintain this mapping for record-keeping only
             self.sheet_id_to_token[sheet_id] = token
             self._save_tokens()
     
     def use_token(self, token: str) -> bool:
         """
-        Decrement usage count for a token.
+        Use a token once and expire it completely.
         
         Args:
             token (str): Token to use
@@ -194,9 +210,10 @@ class TokenManager:
         if self.tokens[token]["usage_left"] <= 0:
             return False
         
-        self.tokens[token]["usage_left"] -= 1
+        # Completely expire the token by setting usage_left to 0
+        self.tokens[token]["usage_left"] = 0
         self._save_tokens()
-        logger.info(f"Token {token[:4]}*** used, {self.tokens[token]['usage_left']} uses left")
+        logger.info(f"Token {token[:4]}*** used and expired")
         
         return True
     
