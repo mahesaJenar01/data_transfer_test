@@ -1,22 +1,26 @@
 import os
 import json
 import uuid
-from typing import Dict, List, Any, Optional
+import time
+from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional, Tuple
 from pathlib import Path
 from .setup_logger import setup_logger
 
 logger = setup_logger('multi_config_cache', 'INFO')
 
 class MultiConfigCache:
-    def __init__(self, cache_file: str = 'config_cache.json'):
+    def __init__(self, cache_file: str = 'config_cache.json', expiration_minutes: int = 30):
         """
         Initialize the MultiConfigCache with a cache file for multiple sheet configurations.
         
         Args:
             cache_file (str): Name of the file to store configuration cache
+            expiration_minutes (int): Number of minutes of inactivity before a configuration expires
         """
         # Store file in the same directory as the script
         self.cache_file = os.path.join(os.getcwd(), cache_file)
+        self.expiration_minutes = expiration_minutes
         self.config_cache: Dict[str, Any] = {
             "global_settings": {
                 "transfer_destination": "LAYER 1"
@@ -35,6 +39,12 @@ class MultiConfigCache:
                     # Ensure it has the expected structure
                     if "global_settings" in loaded_cache and "sheet_configs" in loaded_cache:
                         self.config_cache = loaded_cache
+                        
+                        # Ensure all configs have a last_accessed timestamp
+                        for config in self.config_cache["sheet_configs"]:
+                            if "last_accessed" not in config:
+                                # Set to current time if not present
+                                config["last_accessed"] = time.time()
                     else:
                         # Convert from old format if needed
                         if not isinstance(loaded_cache, dict) or "global_settings" not in loaded_cache:
@@ -52,6 +62,7 @@ class MultiConfigCache:
                                 # Generate a unique ID for the old config
                                 sheet_id = str(uuid.uuid4())
                                 old_config["sheet_id"] = sheet_id
+                                old_config["last_accessed"] = time.time()  # Add timestamp
                                 self.config_cache["sheet_configs"].append(old_config)
                                 logger.info(f"Converted old single config to multi-config format with ID: {sheet_id}")
                             
@@ -113,7 +124,14 @@ class MultiConfigCache:
         Returns:
             List[Dict[str, Any]]: List of all sheet configurations
         """
-        return self.config_cache.get("sheet_configs", []).copy()
+        configs = self.config_cache.get("sheet_configs", []).copy()
+        
+        # Remove last_accessed from the returned configs if it's for UI display
+        for config in configs:
+            # Create a copy that doesn't include the last_accessed timestamp if needed
+            pass  # Keep for now as it might be useful for debugging
+        
+        return configs
 
     def get_sheet_config(self, sheet_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -159,6 +177,9 @@ class MultiConfigCache:
         sheet_id = str(uuid.uuid4())
         config["sheet_id"] = sheet_id
         
+        # Add current timestamp
+        config["last_accessed"] = time.time()
+        
         # Initialize sheet_configs if it doesn't exist
         if "sheet_configs" not in self.config_cache:
             self.config_cache["sheet_configs"] = []
@@ -168,6 +189,7 @@ class MultiConfigCache:
         
         # Save the updated configuration
         self._save_cache()
+        logger.info(f"Added new sheet config with ID: {sheet_id}, name: {config.get('sheet_name')}")
         
         return sheet_id
 
@@ -190,6 +212,9 @@ class MultiConfigCache:
                 # Preserve the sheet_id
                 config["sheet_id"] = sheet_id
                 
+                # Preserve or update the last_accessed timestamp
+                config["last_accessed"] = existing_config.get("last_accessed", time.time())
+                
                 # Update the configuration
                 self.config_cache["sheet_configs"][i] = config
                 
@@ -199,6 +224,84 @@ class MultiConfigCache:
                 return previous_config
         
         return None
+
+    def update_last_accessed(self, sheet_name: str) -> bool:
+        """
+        Update the last_accessed timestamp for a sheet configuration.
+        
+        Args:
+            sheet_name (str): Name of the sheet
+            
+        Returns:
+            bool: True if updated, False if configuration not found
+        """
+        for i, config in enumerate(self.config_cache.get("sheet_configs", [])):
+            if config.get("sheet_name") == sheet_name:
+                # Update the timestamp
+                self.config_cache["sheet_configs"][i]["last_accessed"] = time.time()
+                
+                # Save the updated configuration
+                self._save_cache()
+                
+                logger.debug(f"Updated last_accessed timestamp for sheet: {sheet_name}")
+                return True
+        
+        logger.warning(f"Could not update timestamp for sheet: {sheet_name} - not found")
+        return False
+
+    def check_expired_configs(self) -> List[Dict[str, Any]]:
+        """
+        Check for expired configurations and return them.
+        
+        Returns:
+            List[Dict[str, Any]]: List of expired configurations
+        """
+        now = time.time()
+        expired_configs = []
+        
+        for config in self.config_cache.get("sheet_configs", []):
+            last_accessed = config.get("last_accessed", 0)
+            elapsed_minutes = (now - last_accessed) / 60
+            
+            if elapsed_minutes > self.expiration_minutes:
+                expired_configs.append(config.copy())
+        
+        return expired_configs
+
+    def delete_expired_configs(self) -> List[Tuple[str, str]]:
+        """
+        Delete expired configurations.
+        
+        Returns:
+            List[Tuple[str, str]]: List of (sheet_id, sheet_name) tuples of deleted configurations
+        """
+        now = time.time()
+        to_delete = []
+        deleted_info = []
+        
+        # Find expired configurations
+        for i, config in enumerate(self.config_cache.get("sheet_configs", [])):
+            last_accessed = config.get("last_accessed", 0)
+            elapsed_minutes = (now - last_accessed) / 60
+            
+            if elapsed_minutes > self.expiration_minutes:
+                to_delete.append(i)
+                deleted_info.append((
+                    config.get("sheet_id", "unknown"),
+                    config.get("sheet_name", "unknown")
+                ))
+                logger.info(f"Configuration for '{config.get('sheet_name')}' expired after {elapsed_minutes:.1f} minutes of inactivity")
+        
+        # Delete in reverse order to avoid index issues
+        for index in sorted(to_delete, reverse=True):
+            del self.config_cache["sheet_configs"][index]
+        
+        # Save if any were deleted
+        if to_delete:
+            self._save_cache()
+            logger.info(f"Deleted {len(to_delete)} expired configurations")
+        
+        return deleted_info
 
     def delete_sheet_config(self, sheet_id: str) -> bool:
         """
@@ -221,3 +324,32 @@ class MultiConfigCache:
                 return True
         
         return False
+
+    def get_expiration_status(self) -> List[Dict[str, Any]]:
+        """
+        Get expiration status for all configurations.
+        
+        Returns:
+            List[Dict[str, Any]]: List of configurations with expiration details
+        """
+        now = time.time()
+        status_list = []
+        
+        for config in self.config_cache.get("sheet_configs", []):
+            last_accessed = config.get("last_accessed", 0)
+            elapsed_minutes = (now - last_accessed) / 60
+            remaining_minutes = max(0, self.expiration_minutes - elapsed_minutes)
+            
+            status = {
+                "sheet_id": config.get("sheet_id"),
+                "sheet_name": config.get("sheet_name"),
+                "last_accessed": datetime.fromtimestamp(last_accessed).isoformat(),
+                "elapsed_minutes": round(elapsed_minutes, 1),
+                "remaining_minutes": round(remaining_minutes, 1),
+                "expires_at": datetime.fromtimestamp(last_accessed + (self.expiration_minutes * 60)).isoformat(),
+                "is_expired": elapsed_minutes > self.expiration_minutes
+            }
+            
+            status_list.append(status)
+        
+        return status_list

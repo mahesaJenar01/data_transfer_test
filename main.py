@@ -7,7 +7,7 @@ from pyngrok import ngrok
 from pydantic import BaseModel
 from typing import List, Union, Optional
 from fastapi.staticfiles import StaticFiles
-from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi import FastAPI, HTTPException, Request, Header, BackgroundTasks
 from fastapi.responses import FileResponse, StreamingResponse
 
 from setup_ngrok import start_ngrok
@@ -41,6 +41,46 @@ app = FastAPI(
 )
 
 connected_clients = {}
+
+# Configure expiration in minutes
+EXPIRATION_MINUTES = 30
+
+# Initialize config cache with expiration time
+config_cache = MultiConfigCache(expiration_minutes=EXPIRATION_MINUTES)
+
+# Background task for checking expired configurations
+async def check_expired_configurations():
+    """
+    Periodically check for and delete expired configurations.
+    """
+    try:
+        logger.info(f"Starting background task to check for expired configurations every {EXPIRATION_MINUTES/2} minutes")
+        while True:
+            # Wait for half the expiration time before checking
+            await asyncio.sleep(EXPIRATION_MINUTES * 30)  # Convert to seconds
+            
+            logger.debug("Checking for expired configurations")
+            deleted_configs = config_cache.delete_expired_configs()
+            
+            if deleted_configs:
+                # Get the names of all currently configured sheets
+                sheet_configs = config_cache.get_all_sheet_configs()
+                sheet_names = [config.get("sheet_name") for config in sheet_configs if config.get("sheet_name")]
+                
+                # Update the Use sheet with updated sheet names
+                update_use_sheet(service, sheet_names=sheet_names)
+                
+                # Notify clients about the configuration update
+                await notify_clients("config_updated", {
+                    "deleted_configs": [name for _, name in deleted_configs]
+                })
+                
+                logger.info(f"Deleted {len(deleted_configs)} expired configurations")
+    except Exception as e:
+        logger.error(f"Error in expired configurations check: {e}")
+        # Restart the task
+        logger.info("Restarting expired configurations check task")
+        asyncio.create_task(check_expired_configurations())
 
 @app.get('/sse')
 async def sse():
@@ -117,9 +157,6 @@ os.makedirs('static/js', exist_ok=True)
 
 # Mount static files directory
 app.mount("/static", StaticFiles(directory="static"), name="static")
-
-# Initialize config cache
-config_cache = MultiConfigCache()
 
 # Pydantic models for request validation
 class GlobalSettings(BaseModel):
@@ -392,6 +429,10 @@ async def processing_data(data: OnChange):
                 'result': 'Skipped due to missing configuration'
             }
         
+        # Update the last_accessed timestamp for this configuration
+        config_cache.update_last_accessed(data.sheet_name)
+        logger.info(f"Updated access timestamp for '{data.sheet_name}' - extended expiration by {EXPIRATION_MINUTES} minutes")
+        
         # Get global settings
         global_settings = config_cache.get_global_settings()
         
@@ -476,6 +517,17 @@ async def processing_data(data: OnChange):
             'error': str(e)
         }, 500
 
+# Add an endpoint to view current expiration status
+@app.get("/admin/expiration-status")
+async def get_expiration_status():
+    """
+    Return expiration status for all configurations
+    """
+    return {
+        "expiration_minutes": EXPIRATION_MINUTES,
+        "configurations": config_cache.get_expiration_status()
+    }
+
 # Get token stats endpoint (for admins)
 @app.get("/admin/token_stats")
 async def get_token_stats():
@@ -501,6 +553,9 @@ async def startup_event():
     
     # Update Use sheet with all sheet names from configurations
     update_sheet_names_in_use_sheet()
+    
+    # Start the background task for checking expired configurations
+    asyncio.create_task(check_expired_configurations())
     
     logger.info("Application startup complete")
 

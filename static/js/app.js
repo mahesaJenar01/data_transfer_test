@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', function() {
     let globalSettings = {};
     let currentEditingId = null;
     let eventSource = null;
+    let expirationStatus = {};
     
     // Function to show loading state
     function showLoading() {
@@ -79,6 +80,16 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
+    // Function to format date and time nicely
+    function formatDateTime(dateTimeString) {
+        try {
+            const date = new Date(dateTimeString);
+            return date.toLocaleString();
+        } catch (e) {
+            return dateTimeString;
+        }
+    }
+    
     // Function to populate sheet list
     function populateSheetList() {
         // Clear current list
@@ -97,7 +108,45 @@ document.addEventListener('DOMContentLoaded', function() {
             sheetName.textContent = config.sheet_name;
             
             const sheetDetails = clone.querySelector('.sheet-details');
-            sheetDetails.textContent = `Dana: ${config.dana_used} • SpreadsheetID: ${config.spreadsheet_ids.substring(0, 15)}...`;
+            
+            // Basic details
+            let detailsText = `Dana: ${config.dana_used} • SpreadsheetID: ${config.spreadsheet_ids.substring(0, 15)}...`;
+            
+            // Add expiration info if available
+            const expInfo = expirationStatus[config.sheet_id];
+            if (expInfo) {
+                detailsText += ` • Expires: ${formatDateTime(expInfo.expires_at)}`;
+                
+                // Add the expiration indicator
+                const expirationIndicator = document.createElement('div');
+                expirationIndicator.className = 'expiration-indicator';
+                
+                // Calculate percentage of time remaining
+                const percentRemaining = (expInfo.remaining_minutes / 30) * 100; // Assuming 30 minutes is max
+                
+                // Set color based on time remaining
+                let indicatorColor = '#4CAF50'; // Green
+                if (percentRemaining < 30) {
+                    indicatorColor = '#F44336'; // Red - less than 30% remaining
+                } else if (percentRemaining < 60) {
+                    indicatorColor = '#FF9800'; // Orange - less than 60% remaining
+                }
+                
+                // Create the tooltip content
+                const tooltipText = document.createElement('span');
+                tooltipText.className = 'tooltip-text';
+                tooltipText.textContent = `${Math.round(expInfo.remaining_minutes)} minutes remaining • Expires at ${formatDateTime(expInfo.expires_at)}`;
+                
+                // Set indicator styles
+                expirationIndicator.style.backgroundColor = indicatorColor;
+                expirationIndicator.setAttribute('title', `${Math.round(expInfo.remaining_minutes)} minutes remaining`);
+                expirationIndicator.appendChild(tooltipText);
+                
+                // Add indicator to sheet item
+                sheetItem.appendChild(expirationIndicator);
+            }
+            
+            sheetDetails.textContent = detailsText;
             
             const editBtn = clone.querySelector('.edit-btn');
             editBtn.addEventListener('click', () => editSheetConfig(config.sheet_id));
@@ -109,6 +158,38 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         
         checkEmptyState();
+    }
+    
+    // Function to load expiration status
+    async function loadExpirationStatus() {
+        try {
+            const response = await fetch('/admin/expiration-status', {
+                headers: {
+                    'X-UI-Request': 'true'
+                }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            // Convert to a map by sheet_id for easier lookup
+            const statusMap = {};
+            for (const configStatus of data.configurations) {
+                statusMap[configStatus.sheet_id] = configStatus;
+            }
+            
+            // Update global variable
+            expirationStatus = statusMap;
+            
+            // Refresh the sheet list with the new expiration data
+            populateSheetList();
+            
+        } catch (error) {
+            console.error('Error loading expiration status:', error);
+        }
     }
     
     // Function to load all configurations
@@ -134,13 +215,18 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Populate the UI
             document.getElementById('transfer_destination').value = globalSettings.transfer_destination || 'LAYER 1';
-            populateSheetList();
+            
+            // Load expiration status and then populate the sheet list
+            await loadExpirationStatus();
             
             showStatus('Configurations loaded successfully');
         } catch (error) {
             hideLoading();
             console.error('Error loading configurations:', error);
             showStatus('Failed to load configurations: ' + error.message, true);
+            
+            // Still try to populate with what we have
+            populateSheetList();
         }
     }    
     
@@ -284,7 +370,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 sheetConfigs.push(data.config);
             }
             
-            populateSheetList();
+            // Refresh expiration status
+            await loadExpirationStatus();
+            
             toggleForm(false);
             
             showStatus(`Sheet configuration ${isEdit ? 'updated' : 'added'} successfully`);
@@ -322,6 +410,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     showNotification('Configuration updated automatically');
                 } else if (data.type === 'data_processed') {
                     console.log('Data processed for sheet:', data.sheet_name);
+                    // When data is processed, update expiration status as the timestamp resets
+                    loadExpirationStatus();
                     showNotification(`Data processed for sheet: ${data.sheet_name}`);
                 } else if (data.type === 'connected') {
                     console.log('Connected to update stream');
@@ -344,6 +434,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    // Periodically refresh expiration status
+    function startExpirationRefresh() {
+        // Refresh every minute
+        setInterval(loadExpirationStatus, 60000);
+    }
+    
     // Event listeners
     globalSettingsForm.addEventListener('submit', submitGlobalSettings);
     sheetConfigForm.addEventListener('submit', submitSheetConfig);
@@ -352,6 +448,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load configurations when the page loads
     loadConfigurations();
+    
+    // Start periodic refresh of expiration status
+    startExpirationRefresh();
     
     // Setup SSE connection
     setupSSEConnection();
