@@ -48,6 +48,16 @@ EXPIRATION_MINUTES = 30
 # Initialize config cache with expiration time
 config_cache = MultiConfigCache(expiration_minutes=EXPIRATION_MINUTES)
 
+# Shutdown event
+shutdown_event = asyncio.Event()
+
+@app.on_event("shutdown")
+async def shutdown_event_handler():
+    logger.info("Application shutdown initiated, stopping background tasks")
+    shutdown_event.set()
+    # Give background tasks a moment to terminate gracefully
+    await asyncio.sleep(1)
+
 # Background task for checking expired configurations
 async def check_expired_configurations():
     """
@@ -55,10 +65,21 @@ async def check_expired_configurations():
     """
     try:
         logger.info(f"Starting background task to check for expired configurations every {EXPIRATION_MINUTES/2} minutes")
-        while True:
-            # Wait for half the expiration time before checking
-            await asyncio.sleep(EXPIRATION_MINUTES * 30)  # Convert to seconds
-            
+        while not shutdown_event.is_set():
+            # Use wait_for with a timeout that can be cancelled
+            try:
+                # Wait but allow for cancellation
+                await asyncio.wait_for(
+                    shutdown_event.wait(), 
+                    timeout=EXPIRATION_MINUTES * 30
+                )
+                # If we get here, shutdown was requested
+                logger.info("Shutdown requested, stopping expired configurations check")
+                break
+            except asyncio.TimeoutError:
+                # Normal timeout - continue with our task
+                pass
+                
             logger.debug("Checking for expired configurations")
             deleted_configs = config_cache.delete_expired_configs()
             
@@ -76,11 +97,16 @@ async def check_expired_configurations():
                 })
                 
                 logger.info(f"Deleted {len(deleted_configs)} expired configurations")
+            
+    except asyncio.CancelledError:
+        # Handle task cancellation gracefully
+        logger.info("Expired configurations check task cancelled")
     except Exception as e:
         logger.error(f"Error in expired configurations check: {e}")
-        # Restart the task
-        logger.info("Restarting expired configurations check task")
-        asyncio.create_task(check_expired_configurations())
+        if not shutdown_event.is_set():
+            # Only restart if we're not shutting down
+            logger.info("Restarting expired configurations check task")
+            asyncio.create_task(check_expired_configurations())
 
 @app.get('/sse')
 async def sse():
@@ -567,9 +593,10 @@ if __name__ == '__main__':
     # Update use sheet with the ngrok URL
     update_use_sheet(service, api_url=ngrok_tunnel.public_url)
 
-    # Start the FastAPI application
+    # Start the FastAPI application with a shutdown timeout
     try:
-        uvicorn.run(app, host='0.0.0.0', port=8000)
+        uvicorn.run(app, host='0.0.0.0', port=8000, timeout_keep_alive=5, timeout_graceful_shutdown=10)
     finally:
         # Clean up the ngrok tunnel when the application exits
         ngrok.kill()
+        logger.info("Application shutdown complete, ngrok tunnel closed")
