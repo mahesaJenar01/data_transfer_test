@@ -7,7 +7,7 @@ from pyngrok import ngrok
 from pydantic import BaseModel
 from typing import List, Union, Optional
 from fastapi.staticfiles import StaticFiles
-from fastapi import FastAPI, HTTPException, Request, Header, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.responses import FileResponse, StreamingResponse
 
 from setup_ngrok import start_ngrok
@@ -502,6 +502,15 @@ async def processing_data(data: OnChange):
             service=service
         )
 
+        if isinstance(formatted_data, str):
+            logger.debug(formatted_data)
+            # Check if this is a token error
+            handle_token_error(formatted_data)
+            return {
+                'message': 'Data cannot be sent.',
+                'result': formatted_data
+            }
+
         # Process and update spreadsheet
         if not isinstance(formatted_data, str):
             result = ''
@@ -511,6 +520,13 @@ async def processing_data(data: OnChange):
 
             logger.debug(result)
             
+            if result is None:
+                logger.debug("Failed to update spreadsheet")
+                return {
+                    'message': 'Failed to update spreadsheet.',
+                    'result': 'Error occurred during spreadsheet update'
+                }
+
             # Notify clients that data was processed
             await notify_clients("data_processed", {
                 "sheet_name": data.sheet_name
@@ -536,8 +552,12 @@ async def processing_data(data: OnChange):
         if 'copy_data' in locals() and copy_data and 'data' in locals() and data:
             save_error_data.add(data.sheet_name, copy_data)
             logger.error(f'Saved error data for sheet {data.sheet_name} for later retry')
-            
+                
         logger.error(f'Unexpected error: {e}')
+        
+        # Check if this is a token error and handle it
+        handle_token_error(e)
+        
         return {
             'message': 'An unexpected error occurred',
             'error': str(e)
@@ -584,6 +604,30 @@ async def startup_event():
     asyncio.create_task(check_expired_configurations())
     
     logger.info("Application startup complete")
+
+def handle_token_error(error_message):
+    """
+    Check if an error is related to token expiration and shutdown if necessary
+    """
+    if "invalid_grant" in str(error_message) and ("expired" in str(error_message) or "revoked" in str(error_message)):
+        logger.error(f"Authentication token has expired or been revoked: {error_message}")
+        logger.info("Initiating application shutdown due to token error")
+        
+        # Set the shutdown event to stop background tasks
+        shutdown_event.set()
+        
+        # Schedule shutdown
+        import asyncio
+        asyncio.create_task(shutdown_application())
+
+async def shutdown_application():
+    """
+    Perform graceful shutdown with a timeout
+    """
+    logger.info("Shutting down application due to token error")
+    await asyncio.sleep(3)  # Brief delay to allow logging
+    import sys
+    sys.exit(0)  # Force exit the application
 
 # Main entry point
 if __name__ == '__main__':
