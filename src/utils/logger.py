@@ -5,8 +5,8 @@ def setup_logger(logger_name: str, level: str= 'INFO'):
     Set up a logger with specified level.
     
     Args:
+        logger_name: Name for the logger instance
         level: Logging level (e.g., 'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL')
-                Can be string or logging constant
     
     Returns:
         logging.Logger: Configured logger instance

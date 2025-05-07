@@ -1,33 +1,16 @@
-import os
 import sys
 import time
-from pathlib import Path
 import googleapiclient.discovery
-from ..setup_logger import setup_logger
-from dotenv import load_dotenv
+from typing import List, Optional
+
+from ..utils.logger import setup_logger
+from ..config.settings import USE_SHEET_ID
 
 logger = setup_logger('use_sheet', 'INFO')
 
-# Get the current file's directory and find the .env file
-current_dir = Path(__file__).resolve().parent
-root_dir = current_dir.parent.parent
-env_path = root_dir / '.env'
-
-# Load the .env file
-if not load_dotenv(env_path):
-    logger.error(f'Could not find .env file at {env_path}')
-    raise FileNotFoundError(f'.env file not found at {env_path}')
-
-# Get the USE_SHEET_ID from environment variables
-use_sheet_id = os.getenv('USE_SHEET_ID')
-
-if not use_sheet_id:
-    logger.error('USE_SHEET_ID not found in environment variables')
-    raise ValueError('USE_SHEET_ID environment variable is required')
-
 def update_use_sheet(
         service: 'googleapiclient.discovery.Resource', *, 
-        sheet_names: list = None, 
+        sheet_names: Optional[List[str]] = None, 
         api_url: str = '',
         max_retries: int = 3,
         retry_delay: float = 1.0
@@ -36,22 +19,26 @@ def update_use_sheet(
     Update the use sheet with a comma-separated list of sheet names or API URL with retry mechanism.
 
     Args:
-        service (googleapiclient.discovery.Resource): Google Sheets API service
-        sheet_names (list, optional): List of sheet names to update. Defaults to None.
-        api_url (str, optional): API URL to update. Defaults to ''.
-        max_retries (int, optional): Maximum number of retry attempts. Defaults to 3.
-        retry_delay (float, optional): Delay between retry attempts in seconds. Defaults to 1.0.
+        service: Google Sheets API service
+        sheet_names: List of sheet names to update. Defaults to None.
+        api_url: API URL to update. Defaults to ''.
+        max_retries: Maximum number of retry attempts. Defaults to 3.
+        retry_delay: Delay between retry attempts in seconds. Defaults to 1.0.
     
     Raises:
         SystemExit: If all retry attempts fail
     """
+    if not USE_SHEET_ID:
+        logger.error('USE_SHEET_ID not found in environment variables')
+        raise ValueError('USE_SHEET_ID environment variable is required')
+    
     last_error = None
     for attempt in range(max_retries):
         try:
             if api_url:
                 logger.debug('API URL provided; updating cell B1.')
                 service.spreadsheets().values().update(
-                    spreadsheetId=use_sheet_id, 
+                    spreadsheetId=USE_SHEET_ID, 
                     range='B1', 
                     valueInputOption='RAW', 
                     body={
@@ -63,7 +50,7 @@ def update_use_sheet(
                 sheet_names_str = ", ".join(sheet_names)
                 logger.debug(f'Updating sheet names in cell B2: {sheet_names_str}')
                 service.spreadsheets().values().update(
-                    spreadsheetId=use_sheet_id, 
+                    spreadsheetId=USE_SHEET_ID, 
                     range='B2', 
                     valueInputOption='RAW', 
                     body={

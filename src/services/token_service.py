@@ -4,9 +4,10 @@ import string
 import json
 from typing import Dict, Optional, List, Tuple
 import googleapiclient.discovery
-from .setup_logger import setup_logger
 
-logger = setup_logger('token_manager', 'INFO')
+from ..utils.logger import setup_logger
+
+logger = setup_logger('token_service', 'INFO')
 
 class TokenManager:
     def __init__(self, service: 'googleapiclient.discovery.Resource', use_sheet_id: str):
@@ -22,8 +23,11 @@ class TokenManager:
         self.tokens = {}  # Store token info: {token: {"usage_left": count, "sheet_ids": [ids]}}
         self.sheet_id_to_token = {}  # Map sheet_ids back to tokens
         
+        # Make sure data directory exists
+        os.makedirs('data', exist_ok=True)
+        
         # Load tokens from file if exists
-        self._token_file = os.path.join(os.getcwd(), "token_info.json")
+        self._token_file = 'data/token_info.json'
         self._load_tokens()
     
     def _load_tokens(self) -> None:
@@ -43,6 +47,9 @@ class TokenManager:
     def _save_tokens(self) -> None:
         """Save token information to file."""
         try:
+            # Make sure data directory exists
+            os.makedirs(os.path.dirname(self._token_file), exist_ok=True)
+            
             data = {
                 "tokens": self.tokens,
                 "sheet_id_to_token": self.sheet_id_to_token

@@ -436,8 +436,8 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Periodically refresh expiration status
     function startExpirationRefresh() {
-        // Refresh every minute
-        setInterval(loadExpirationStatus, 60000);
+        // Refresh every 5 minute
+        setInterval(loadExpirationStatus, 300000);
     }
     
     // Event listeners

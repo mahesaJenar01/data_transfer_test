@@ -1,10 +1,11 @@
 from datetime import datetime
 import googleapiclient.discovery
 from typing import List, Tuple, Union, Dict
-from .spreadsheets.target import retrieve_target_spreadsheet_values
-from .setup_logger import setup_logger
 
-logger = setup_logger('preparing_data', 'INFO')
+from ..utils.logger import setup_logger
+from ..spreadsheets.target import retrieve_target_spreadsheet_values
+
+logger = setup_logger('data_processor', 'INFO')
 
 def get_cells_to_input(
         dana_used: str, 
@@ -12,6 +13,18 @@ def get_cells_to_input(
         spreadsheet_ids: str, 
         service: 'googleapiclient.discovery.Resource'
 ) -> Union[Tuple[List[int], List[int]], str]:
+    """
+    Get available cells for input in the target spreadsheet.
+    
+    Args:
+        dana_used: Dana used value
+        total_range: Total number of rows needed
+        spreadsheet_ids: Target spreadsheet ID
+        service: Google Sheets API service
+        
+    Returns:
+        Tuple of name ranges and bank ranges, or error message as string
+    """
     result = retrieve_target_spreadsheet_values(spreadsheet_ids, service)
 
     if isinstance(result, str):
@@ -57,6 +70,7 @@ def get_cells_to_input(
     return name_ranges, bank_ranges
 
 def get_current_time():
+    """Get the current time formatted as HH:MM:SS."""
     return datetime.now().strftime("%H:%M:%S")
 
 def preparing_data(
@@ -64,6 +78,17 @@ def preparing_data(
         values: List[List[Union[str, int]]], 
         service: 'googleapiclient.discovery.Resource'
 ) -> Union[List[Dict[str, Union[list, str]]], str]:
+    """
+    Prepare data for batch update to target spreadsheet.
+    
+    Args:
+        config: Configuration dictionary
+        values: Values to prepare
+        service: Google Sheets API service
+        
+    Returns:
+        List of prepared data or error message as string
+    """
     try:
         data_ranges = get_cells_to_input(
             config['dana_used'], 

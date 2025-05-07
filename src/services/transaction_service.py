@@ -1,22 +1,25 @@
 import os
 import json
-from pathlib import Path
-from typing import List, Set
-from .setup_logger import setup_logger
+from typing import List, Set, Dict
 
-logger = setup_logger('transaction_tracker', 'INFO')
+from ..utils.logger import setup_logger
+
+logger = setup_logger('transaction_service', 'INFO')
 
 class TransactionTracker:
-    def __init__(self, storage_file: str = "transaction_history.json"):
+    def __init__(self, storage_file: str = "data/transaction_history.json"):
         """
         Initialize the TransactionTracker with a storage file path.
         
         Args:
             storage_file (str): Name of the file to store transaction IDs
         """
-        # Store file in main directory
-        self.storage_file = os.path.join(os.getcwd(), storage_file)
-        self._transaction_sets: dict[str, Set[str]] = {}
+        # Make sure data directory exists
+        os.makedirs('data', exist_ok=True)
+        
+        # Store file in data directory
+        self.storage_file = storage_file
+        self._transaction_sets: Dict[str, Set[str]] = {}
         self._load_transactions()
 
     def _load_transactions(self) -> None:
@@ -37,6 +40,9 @@ class TransactionTracker:
     def _save_transactions(self) -> None:
         """Save transaction IDs to the storage file."""
         try:
+            # Ensure data directory exists
+            os.makedirs(os.path.dirname(self.storage_file), exist_ok=True)
+            
             # Convert sets to lists for JSON serialization
             data = {
                 sheet: list(transactions)

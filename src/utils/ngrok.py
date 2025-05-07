@@ -1,9 +1,19 @@
 import os
 from pyngrok import ngrok
-from src.setup_logger import setup_logger
+from .logger import setup_logger
 
-logger = setup_logger('start_ngrok', 'INFO')
+logger = setup_logger('ngrok', 'INFO')
+
 def start_ngrok():
+    """
+    Start an ngrok tunnel for the API.
+    
+    Returns:
+        NgrokTunnel: The created ngrok tunnel
+    
+    Raises:
+        ValueError: If NGROK_AUTH_TOKEN is not found
+    """
     # Get the ngrok auth token from environment variable
     ngrok_auth_token = os.getenv('NGROK_AUTH_TOKEN')
     
@@ -30,4 +40,6 @@ def start_ngrok():
     
     # Open a ngrok tunnel to the API
     ngrok_tunnel = ngrok.connect(8000)
+    logger.info(f'Ngrok tunnel established at: {ngrok_tunnel.public_url}')
+    
     return ngrok_tunnel

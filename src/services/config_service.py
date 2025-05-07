@@ -4,13 +4,13 @@ import uuid
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Tuple
-from pathlib import Path
-from .setup_logger import setup_logger
 
-logger = setup_logger('multi_config_cache', 'INFO')
+from ..utils.logger import setup_logger
+
+logger = setup_logger('config_service', 'INFO')
 
 class MultiConfigCache:
-    def __init__(self, cache_file: str = 'config_cache.json', expiration_minutes: int = 30):
+    def __init__(self, cache_file: str = 'data/config_cache.json', expiration_minutes: int = 30):
         """
         Initialize the MultiConfigCache with a cache file for multiple sheet configurations.
         
@@ -18,8 +18,11 @@ class MultiConfigCache:
             cache_file (str): Name of the file to store configuration cache
             expiration_minutes (int): Number of minutes of inactivity before a configuration expires
         """
-        # Store file in the same directory as the script
-        self.cache_file = os.path.join(os.getcwd(), cache_file)
+        # Make sure data directory exists
+        os.makedirs('data', exist_ok=True)
+        
+        # Store file in the data directory
+        self.cache_file = cache_file
         self.expiration_minutes = expiration_minutes
         self.config_cache: Dict[str, Any] = {
             "global_settings": {
@@ -77,6 +80,9 @@ class MultiConfigCache:
     def _save_cache(self) -> None:
         """Save configurations to the cache file."""
         try:
+            # Make sure the data directory exists
+            os.makedirs(os.path.dirname(self.cache_file), exist_ok=True)
+            
             with open(self.cache_file, 'w') as f:
                 json.dump(self.config_cache, f, indent=4)
         except Exception as e:
@@ -124,14 +130,7 @@ class MultiConfigCache:
         Returns:
             List[Dict[str, Any]]: List of all sheet configurations
         """
-        configs = self.config_cache.get("sheet_configs", []).copy()
-        
-        # Remove last_accessed from the returned configs if it's for UI display
-        for config in configs:
-            # Create a copy that doesn't include the last_accessed timestamp if needed
-            pass  # Keep for now as it might be useful for debugging
-        
-        return configs
+        return self.config_cache.get("sheet_configs", []).copy()
 
     def get_sheet_config(self, sheet_id: str) -> Optional[Dict[str, Any]]:
         """

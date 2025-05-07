@@ -1,15 +1,15 @@
 import os.path
 import traceback
-
-from .setup_logger import setup_logger
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 
+from ..utils.logger import setup_logger
+
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets']
-logger = setup_logger('create_services', 'INFO')
+logger = setup_logger('authentication', 'INFO')
 
 def create_service():
     """Creates and configures Google Sheets API service."""
@@ -19,7 +19,6 @@ def create_service():
 
         # Log the current working directory and files
         logger.debug(f'Working directory: {os.getcwd()}')
-        logger.debug(f'Files in directory: {os.listdir()}')
         
         if os.path.exists('credentials.json'):
             logger.debug('credentials.json found')
@@ -81,3 +80,33 @@ def create_service():
         logger.error(f'Unexpected error in create_service: {str(e)}')
         logger.error(traceback.format_exc())
         return None
+
+def handle_token_error(error_message, shutdown_event=None):
+    """
+    Check if an error is related to token expiration and shutdown if necessary
+    
+    Args:
+        error_message: Error message to check
+        shutdown_event: Event to signal for shutdown
+    """
+    if "invalid_grant" in str(error_message) and ("expired" in str(error_message) or "revoked" in str(error_message)):
+        logger.error(f"Authentication token has expired or been revoked: {error_message}")
+        logger.info("Initiating application shutdown due to token error")
+        
+        # Set the shutdown event to stop background tasks
+        if shutdown_event:
+            shutdown_event.set()
+            
+            # Schedule shutdown
+            import asyncio
+            asyncio.create_task(shutdown_application())
+
+async def shutdown_application():
+    """
+    Perform graceful shutdown with a timeout
+    """
+    logger.info("Shutting down application due to token error")
+    import asyncio
+    await asyncio.sleep(3)  # Brief delay to allow logging
+    import sys
+    sys.exit(0)  # Force exit the application
