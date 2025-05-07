@@ -1,8 +1,5 @@
-from fastapi import APIRouter, HTTPException, Request, Header, Depends
 from fastapi.responses import FileResponse
-from typing import Optional, List, Dict, Any
-import asyncio
-import os
+from fastapi import APIRouter, HTTPException, Depends
 
 from . import models
 from .dependencies import (

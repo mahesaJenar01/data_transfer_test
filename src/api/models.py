@@ -1,5 +1,5 @@
-from typing import List, Union, Optional
 from pydantic import BaseModel
+from typing import List, Union, Optional
 
 class GlobalSettings(BaseModel):
     """Model for global application settings."""

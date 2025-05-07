@@ -114,15 +114,3 @@ class TransactionTracker:
         if sheet_name in self._transaction_sets:
             return len(self._transaction_sets[sheet_name])
         return 0
-
-    def cleanup_old_transactions(self, max_age_days: int = 30) -> None:
-        """
-        Remove transaction IDs older than specified days to prevent unlimited growth.
-        This is a placeholder for future implementation if needed.
-        
-        Args:
-            max_age_days (int): Maximum age of transaction IDs to keep
-        """
-        # TODO: Implement cleanup logic if needed
-        # This would require storing timestamps with transaction IDs
-        pass

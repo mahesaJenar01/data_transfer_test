@@ -5,13 +5,13 @@ from fastapi.staticfiles import StaticFiles
 
 # Import modules from our new structure
 from src.api import api_router
-from src.utils.ngrok import start_ngrok #
-from src.utils.logger import setup_logger #
-from src.services.token_service import TokenManager #
+from src.utils.ngrok import start_ngrok
+from src.utils.logger import setup_logger
+from src.services.token_service import TokenManager
 from src.api.sse import notify_clients, shutdown_event
-from src.services.authentication import create_service #
-from src.spreadsheets.use_sheet import update_use_sheet #
-from src.services.config_service import MultiConfigCache# 
+from src.services.authentication import create_service
+from src.spreadsheets.use_sheet import update_use_sheet
+from src.services.config_service import MultiConfigCache
 from src.config.settings import API_HOST, API_PORT, NGROK_ENABLED
 
 # Create logger

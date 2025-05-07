@@ -1,12 +1,12 @@
-from fastapi import Depends, Header, Request
-from typing import Optional, Dict, Any, Tuple
 import os
+from typing import Optional
+from fastapi import Depends, Header, Request
 
+from ..utils.logger import setup_logger
+from ..services.token_service import TokenManager
 from ..services.authentication import create_service
 from ..services.config_service import MultiConfigCache
-from ..services.token_service import TokenManager
 from ..services.transaction_service import TransactionTracker
-from ..utils.logger import setup_logger
 
 logger = setup_logger('api_dependencies', 'INFO')
 
