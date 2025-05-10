@@ -288,11 +288,17 @@ async def processing_data(data: models.OnChange):
         )
 
         if isinstance(formatted_data, str):
+            # Save error data for potential retry, associated with its sheet name
+            if copy_data and data:
+                error_data.add(data.sheet_name, copy_data)
+                logger.error(f'Saved error data for sheet {data.sheet_name} for later retry: {formatted_data}')
+                
             logger.debug(formatted_data)
             return {
                 'message': 'Data cannot be sent.',
                 'result': formatted_data
             }
+
 
         # Process and update spreadsheet
         if not isinstance(formatted_data, str):
