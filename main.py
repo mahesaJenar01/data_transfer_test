@@ -42,7 +42,7 @@ async def check_expired_configurations(config_cache, service):
                 # Wait but allow for cancellation
                 await asyncio.wait_for(
                     shutdown_event.wait(), 
-                    timeout=config_cache.expiration_minutes * 30
+                    timeout=5
                 )
                 # If we get here, shutdown was requested
                 break
