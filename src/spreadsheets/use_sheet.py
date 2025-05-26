@@ -47,7 +47,7 @@ def update_use_sheet(
                 ).execute()
             elif sheet_names is not None:
                 # Join all sheet names with commas and update cell B2
-                sheet_names_str = ", ".join(sheet_names)
+                sheet_names_str = "; ".join(sheet_names)
                 logger.debug(f'Updating sheet names in cell B2: {sheet_names_str}')
                 service.spreadsheets().values().update(
                     spreadsheetId=USE_SHEET_ID, 
